@@ -51,7 +51,7 @@ const dir = new THREE.DirectionalLight(0xffffff, 3);
 dir.position.set(2, 2, 1);
 scene.add(dir);
 
-// build airfoil mesh
+// build airfoil mesh (updates in-place if a foil group already exists in the scene)
 function buildAirfoilMesh() {
     const shapePts = naca4Coordinates(params.naca, params.chord, params.points);
     const shape = new THREE.Shape(shapePts);
@@ -63,12 +63,55 @@ function buildAirfoilMesh() {
         steps: 1,
         curveSegments: params.points,
     };
-    const geom = new THREE.ExtrudeGeometry(shape, extrudeSettings);
-    geom.scale(params.scale, params.scale, params.scale);
+    const newGeom = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+    newGeom.scale(params.scale, params.scale, params.scale);
 
     // center geometry on z
-    geom.translate(0, 0, - (params.depth * params.scale) / 2);
+    newGeom.translate(0, 0, - (params.depth * params.scale) / 2);
 
+    // try to find an existing foil group in the scene so we can update geometry in-place
+    const existing = scene.getObjectByName('foil-group');
+    if (existing && existing.children.length > 0 && existing.children[0].isMesh) {
+        const mesh = existing.children[0];
+        const oldGeom = mesh.geometry;
+
+        // If the existing geometry is a BufferGeometry, copy key attributes so references (e.g. morph targets)
+        // attached to the mesh object remain valid. This attempts to preserve any UI/morph bindings.
+        if (oldGeom && oldGeom.isBufferGeometry) {
+            // copy index
+            if (newGeom.index) {
+                oldGeom.setIndex(newGeom.index.clone());
+            } else {
+                oldGeom.setIndex(null);
+            }
+
+            // copy main attributes (position, normal, uv). Keep any existing morphAttributes untouched.
+            ['position', 'normal', 'uv'].forEach((attr) => {
+                if (newGeom.attributes[attr]) {
+                    oldGeom.setAttribute(attr, newGeom.attributes[attr].clone());
+                } else {
+                    oldGeom.deleteAttribute(attr);
+                }
+            });
+
+            // recompute derived data
+            oldGeom.computeBoundingBox();
+            oldGeom.computeBoundingSphere();
+            // if normals were replaced above, ensure they are valid
+            if (!oldGeom.attributes.normal) oldGeom.computeVertexNormals();
+
+            // dispose the temporary geometry we created
+            if (typeof newGeom.dispose === 'function') newGeom.dispose();
+
+            return existing;
+        }
+
+        // fallback: if not buffer geometry, remove and recreate (less ideal)
+        scene.remove(existing);
+        if (existing.geometry) existing.geometry.dispose();
+    }
+
+    // create new material (or reuse if desired by finding existing mesh material)
     const mat = new THREE.MeshStandardMaterial({
         color: 0xb0c4de,
         metalness: 0.9,
@@ -76,25 +119,43 @@ function buildAirfoilMesh() {
         envMapIntensity: 1.0,
         clearcoat: 0.6,
         clearcoatRoughness: 0.1,
-        side: THREE.DoubleSide, // üst-alt görünür olsun
+        side: THREE.DoubleSide,
     });
-    const mesh = new THREE.Mesh(geom, mat);
+    const mesh = new THREE.Mesh(newGeom, mat);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
 
-    // wireframe
-    const geo_wire = new THREE.EdgesGeometry(geom);
-    // const line = new THREE.LineSegments(geo_wire, new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 1 }));
     const group = new THREE.Group();
+    group.name = 'foil-group';
     group.add(mesh);
-    // group.add(line);
+
     return group;
 }
 
 let foil = buildAirfoilMesh();
 scene.add(foil);
 
-addSpanMorphUI(params, foil, naca4Coordinates);
+// create span morph UI once and keep the controller so we can reattach a new foil
+// when geometry is rebuilt without recreating the UI (which would reset values)
+let spanMorphController = addSpanMorphUI(params, foil, naca4Coordinates);
+
+// rebuild helper that disposes previous geometry/materials properly (module scope)
+function rebuildFoil() {
+    if (!foil) return;
+    scene.remove(foil);
+    foil.traverse((child) => {
+        if (child.geometry) child.geometry.dispose();
+        if (child.material) {
+            if (Array.isArray(child.material)) {
+                child.material.forEach((m) => m.dispose());
+            } else {
+                child.material.dispose();
+            }
+        }
+    });
+    foil = buildAirfoilMesh();
+    scene.add(foil);
+}
 // reference axes
 const axes = new THREE.AxesHelper(0.5 * params.scale);
 scene.add(axes);
@@ -223,41 +284,32 @@ function onWindowResize() {
     const scaleInput = document.createElement('input');
     scaleInput.type = 'number';
     scaleInput.step = '0.1';
-    scaleInput.min = '0.1';
     scaleInput.value = params.scale;
     scaleInput.style.width = '100%';
 
+    // create apply button
     const applyBtn = document.createElement('button');
-    applyBtn.textContent = 'Uygula';
-    applyBtn.style.width = '100%';
-    applyBtn.style.padding = '6px';
-    applyBtn.style.cursor = 'pointer';
+    applyBtn.textContent = 'Apply';
+    Object.assign(applyBtn.style, {
+        width: '100%',
+        padding: '6px 8px',
+        marginTop: '6px',
+        cursor: 'pointer',
+        background: '#2b8cff',
+        color: '#fff',
+        border: 'none',
+        borderRadius: '4px',
+    });
 
-    panel.appendChild(makeRow('NACA (sayı, örn 2412)', nacaInput));
+    // assemble panel rows
+    panel.appendChild(makeRow('NACA (4-digit)', nacaInput));
     panel.appendChild(makeRow('Chord', chordInput));
     panel.appendChild(makeRow('Points', pointsInput));
     panel.appendChild(makeRow('Depth', depthInput));
     panel.appendChild(makeRow('Scale', scaleInput));
     panel.appendChild(applyBtn);
-    document.body.appendChild(panel);
 
-    // rebuild helper that disposes previous geometry/materials properly
-    function rebuildFoil() {
-        if (!foil) return;
-        scene.remove(foil);
-        foil.traverse((child) => {
-            if (child.geometry) child.geometry.dispose();
-            if (child.material) {
-                if (Array.isArray(child.material)) {
-                    child.material.forEach((m) => m.dispose());
-                } else {
-                    child.material.dispose();
-                }
-            }
-        });
-        foil = buildAirfoilMesh();
-        scene.add(foil);
-    }
+    document.body.appendChild(panel);
 
     // apply button (reads numeric inputs, sanitizes, updates params and rebuilds)
     applyBtn.addEventListener('click', () => {
@@ -272,8 +324,14 @@ function onWindowResize() {
         params.depth = Math.max(0.001, parseFloat(depthInput.value) || params.depth);
         params.scale = Math.max(0.01, parseFloat(scaleInput.value) || params.scale);
 
-        // update NACA via existing helper (keeps naming consistent)
-        updateNACA(params.naca);
+        // rebuild using module-level helper (keeps resource disposal correct)
+        rebuildFoil();
+        // reattach the existing span-morph controller to the newly built foil so
+        // current UI values (morph parameters) are preserved instead of creating
+        // a new UI which would reset fields.
+        if (spanMorphController && typeof spanMorphController.setFoilMesh === 'function') {
+            spanMorphController.setFoilMesh(foil);
+        }
     });
 
     // optional: rebuild live while editing (debounced)
@@ -289,11 +347,20 @@ function onWindowResize() {
 
 function updateNACA(code) {
     params.naca = code;
-    scene.remove(foil);
-    foil.geometry?.dispose?.();
     foil = buildAirfoilMesh();
-    scene.add(foil);
-    addSpanMorphUI(params, foil, naca4Coordinates);
+    // add foil to scene only if it's not already present
+    const existing = scene.getObjectByName('foil-group');
+    if (!existing) {
+        scene.add(foil);
+    } else if (existing !== foil) {
+        // buildAirfoilMesh returned a new group (recreated) — replace the old one
+        scene.remove(existing);
+        scene.add(foil);
+    }
+    // reattach existing span morph controller to the new foil so UI state persists
+    if (spanMorphController && typeof spanMorphController.setFoilMesh === 'function') {
+        spanMorphController.setFoilMesh(foil);
+    }
 
 }
 

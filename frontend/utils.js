@@ -106,6 +106,22 @@ export function addSpanMorphUI(params, foil, naca4Coordinates) {
     // --- Update foil reference ---
     function setFoilMesh(newFoil) {
         currentFoil = newFoil;
+        // Re-apply the current UI values to the newly attached foil so the
+        // existing morph (dihedral, thickness, shift, start) is preserved
+        // after a rebuild or NACA update. Read inputs and call applySpanMorph.
+        try {
+            const start = Math.max(0, Math.min(100, parseFloat(startInput.value) || 50)) / 100;
+            const factor = Math.max(0.01, parseFloat(factorInput.value) || 1.0);
+            const slices = Math.max(2, parseInt(slicesInput.value, 10) || 40);
+            const shift = parseFloat(shiftInput.value) || 0;
+            const dihedral = (parseFloat(dihedralInput.value) || 0) * Math.PI / 180;
+            applySpanMorph(start, factor, slices, shift, dihedral);
+        } catch (e) {
+            // if inputs aren't yet available or something else fails, swallow
+            // the error — the caller will still have a valid foil attached.
+            // This guard keeps behavior stable during initialization order quirks.
+            // console.warn('setFoilMesh: could not reapply UI values', e);
+        }
     }
 
     // --- UI ---

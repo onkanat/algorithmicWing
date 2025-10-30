@@ -19,9 +19,9 @@ export function animateFoil(scene, foil, renderer, camera, duration = 10, fps = 
     function parseNaca(n) {
         const s = String(n).padStart(4, '0');
         return {
-            M: parseInt(s[0], 10),           // max camber (0-9, % of chord /10)
-            P: parseInt(s[1], 10),           // position of max camber (0-9 -> *0.1)
-            TT: parseInt(s.slice(2, 4), 10)  // thickness percentage (00-99)
+            M: parseInt(s[0], 10),
+            P: parseInt(s[1], 10),
+            TT: parseInt(s.slice(2, 4), 10)
         };
     }
     function formatNaca({ M, P, TT }) {
@@ -29,7 +29,6 @@ export function animateFoil(scene, foil, renderer, camera, duration = 10, fps = 
         return `${Math.round(M)}${Math.round(P)}${tt}`;
     }
 
-    // start from initial NACA
     let currentNacaNums = parseNaca('4430');
     let targetNacaNums = { ...currentNacaNums };
     let lastAppliedNaca = formatNaca(currentNacaNums);
@@ -40,19 +39,70 @@ export function animateFoil(scene, foil, renderer, camera, duration = 10, fps = 
     let targetShift = shiftAmount;
     let targetDihedral = dihedralAngle;
 
-    const framesPerTarget = 30; // yeni hedef her ~30 frame
+    const framesPerTarget = 120;
     let frameCounter = 0;
 
     function randomRange(min, max) { return min + Math.random() * (max - min); }
     function randomInt(min, max) { return Math.floor(randomRange(min, max + 1)); }
 
-    // seçilecek mantıklı NACA aralıkları
     function pickRandomNacaNums() {
         return {
-            M: randomInt(0, 9),           // camber 0-6 (reasonable)
-            P: randomInt(0, 9),           // camber pozisyonu 0-9
-            TT: randomInt(8, 66)          // kalınlık % 8-18
+            M: randomInt(0, 8),
+            P: randomInt(0, 9),
+            TT: randomInt(1, 66)
         };
+    }
+    // --- HUD Overlay ---
+    const infoDiv = document.createElement('div');
+    infoDiv.style.position = 'absolute';
+    infoDiv.style.top = '20px';
+    infoDiv.style.left = '20px';
+    infoDiv.style.width = '250px';
+    infoDiv.style.color = 'lime';
+    infoDiv.style.fontFamily = 'monospace';
+    infoDiv.style.fontSize = '14px';
+    infoDiv.style.background = 'rgba(0,0,0,0.6)';
+    infoDiv.style.padding = '15px';
+    infoDiv.style.border = '2px solid lime';
+    infoDiv.style.borderRadius = '12px';
+    infoDiv.style.zIndex = '9999';
+    infoDiv.style.pointerEvents = 'none';
+    infoDiv.style.boxShadow = '0 0 20px lime, 0 0 40px lime';
+    document.body.appendChild(infoDiv);
+
+    // helper function to create animated bars
+    function createBar(label, value, max = 1, color = 'lime') {
+        const percent = Math.min(100, Math.max(0, value / max * 100));
+        return `
+        <div style="margin-bottom:6px;">
+            <span>${label}</span>
+            <div style="
+                background: rgba(0,0,0,0.3); 
+                width: 100%; 
+                height: 8px; 
+                border-radius:4px; 
+                overflow:hidden;
+                margin-top:2px;">
+                <div style="
+                    width: ${percent}%;
+                    height: 100%;
+                    background: ${color};
+                    transition: width 0.1s ease;
+                    box-shadow: 0 0 8px ${color};
+                "></div>
+            </div>
+        </div>
+    `;
+    }
+
+    function updateInfoDisplay() {
+        infoDiv.innerHTML = `
+        <div style="margin-bottom:10px;"><strong>NACA:</strong> ${formatNaca(currentNacaNums)}</div>
+        ${createBar('Cranked Wing', startPercent, 1)}
+        ${createBar('Taper Ratio', thicknessFactor, 1)}
+        ${createBar('Cranked amount', shiftAmount, 2, 'cyan')}
+        ${createBar('Dihedral °', dihedralAngle * 180 / Math.PI, 90, 'magenta')}
+    `;
     }
 
     // MediaRecorder setup
@@ -74,12 +124,9 @@ export function animateFoil(scene, foil, renderer, camera, duration = 10, fps = 
         const newNacaStr = formatNaca(currentNacaNums);
         if (newNacaStr === lastAppliedNaca) return;
 
-        // İlk tercih: controller.setNaca varsa çağır
         if (typeof controller.setNaca === 'function') {
             controller.setNaca(newNacaStr);
         } else {
-            // değilse controller'ı yeniden oluşturmayı dene (varsayım: addSpanMorphUI içsel mesh'i günceller)
-            // Eğer addSpanMorphUI foil objesine yeni geometri atıyorsa bu işe yarar.
             try {
                 controller = addSpanMorphUI({
                     naca: newNacaStr, chord: 1.0, points: 200, depth: 3, scale: 3.0
@@ -94,42 +141,35 @@ export function animateFoil(scene, foil, renderer, camera, duration = 10, fps = 
     function animate() {
         requestAnimationFrame(animate);
 
-        // yeni rastgele hedefleri periyodik seç
         if (frameCounter % framesPerTarget === 0) {
-            // morph hedefleri
             targetStart = randomRange(0.01, 1);
             targetThickness = randomRange(0.1, 1);
-            targetShift = randomRange(0, 1.5);
-            targetDihedral = randomRange(-45, 60) * Math.PI / 180; // radians
+            targetShift = randomRange(0, 1.8);
+            targetDihedral = randomRange(-45, 65) * Math.PI / 180;
 
-            // yeni NACA hedefleri (mantıklı aralıkta)
             targetNacaNums = pickRandomNacaNums();
         }
 
-        // smooth interpolation (morph)
         const smoothFactor = 0.02;
         startPercent += (targetStart - startPercent) * smoothFactor;
         thicknessFactor += (targetThickness - thicknessFactor) * smoothFactor;
         shiftAmount += (targetShift - shiftAmount) * smoothFactor;
         dihedralAngle += (targetDihedral - dihedralAngle) * smoothFactor;
 
-        // smooth interpolation for numeric NACA components
         currentNacaNums.M += (targetNacaNums.M - currentNacaNums.M) * smoothFactor;
         currentNacaNums.P += (targetNacaNums.P - currentNacaNums.P) * smoothFactor;
         currentNacaNums.TT += (targetNacaNums.TT - currentNacaNums.TT) * smoothFactor;
 
-        // eğer yuvarlanmış rakamlar değiştiyse NACA stringini uygula
         applyNacaIfChanged();
-
-        // apply morph
         controller.applySpanMorph(startPercent, thicknessFactor, 40, shiftAmount, dihedralAngle);
 
-        // render
         renderer.render(scene, camera);
+
+        updateInfoDisplay();
 
         frameCounter++;
         if (frameCounter > duration * fps) {
-            recorder.stop(); // stop video
+            recorder.stop();
         }
     }
 

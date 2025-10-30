@@ -1,84 +1,18 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { addSpanMorphUI } from './utils.js';
+import { naca4Coordinates } from './nacaprofile.js';
+import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 
-// /Users/muratbatuhangunaydin/projects/youtube/algorithmicWing/frontend/wing.js
-// Simple NACA 4-digit airfoil visualiser using Three.js (ES module).
-// Usage: include this module in a bundler-aware page. Adjust params below.
 
 
 const params = {
     naca: '2412',   // NACA 4-digit code
     chord: 1.0,     // chord length
     points: 200,    // points per surface
-    depth: 0.1,     // extrusion depth (spanwise)
+    depth: 3,     // extrusion depth (spanwise)
     scale: 3.0,     // visual scale
 };
-
-function parseNACA(code) {
-    const s = String(code).padStart(4, '0');
-    const m = parseInt(s[0], 10) / 100.0;     // max camber
-    const p = parseInt(s[1], 10) / 10.0;      // location of max camber
-    const t = parseInt(s.slice(2, 4), 10) / 100.0; // thickness
-    return { m, p, t };
-}
-
-function naca4Coordinates(code, chord = 1, n = 200) {
-    const { m, p, t } = parseNACA(code);
-    const ptsUpper = [];
-    const ptsLower = [];
-
-    // cosine spacing for better leading-edge resolution
-    for (let i = 0; i <= n; i++) {
-        const beta = (i / n) * Math.PI;
-        const x = (1 - Math.cos(beta)) / 2 * chord; // from 0..chord
-
-        // thickness distribution (NACA 4-digit standard)
-        const yt =
-            (t * chord / 0.2) *
-            (0.2969 * Math.sqrt(x / chord) -
-                0.1260 * (x / chord) -
-                0.3516 * Math.pow(x / chord, 2) +
-                0.2843 * Math.pow(x / chord, 3) -
-                0.1015 * Math.pow(x / chord, 4));
-
-        // camber line and its slope
-        let yc = 0;
-        let dyc_dx = 0;
-        if (p === 0) {
-            yc = 0;
-            dyc_dx = 0;
-        } else if (x / chord < p) {
-            yc = (m / (p * p)) * (2 * p * (x / chord) - Math.pow(x / chord, 2)) * chord;
-            dyc_dx = (2 * m / (p * p)) * (p - x / chord);
-        } else {
-            yc =
-                (m / Math.pow(1 - p, 2)) *
-                (1 - 2 * p + 2 * p * (x / chord) - Math.pow(x / chord, 2)) *
-                chord;
-            dyc_dx = (2 * m / Math.pow(1 - p, 2)) * (p - x / chord);
-        }
-
-        const theta = Math.atan(dyc_dx);
-
-        const xu = x - yt * Math.sin(theta);
-        const yu = yc + yt * Math.cos(theta);
-
-        const xl = x + yt * Math.sin(theta);
-        const yl = yc - yt * Math.cos(theta);
-
-        ptsUpper.push(new THREE.Vector2(xu, yu));
-        ptsLower.push(new THREE.Vector2(xl, yl));
-    }
-
-    // build top surface from leading (x=0) to trailing (x=chord) and lower returning
-    const coords = [];
-    for (let i = 0; i < ptsUpper.length; i++) coords.push(ptsUpper[i]);
-    for (let i = ptsLower.length - 1; i >= 0; i--) coords.push(ptsLower[i]);
-
-    // center chord at origin by shifting x by -chord/2 and optionally scale
-    const shifted = coords.map(p => new THREE.Vector2(p.x - chord / 2, p.y));
-    return shifted;
-}
 
 // THREE.js scene
 const scene = new THREE.Scene();
@@ -86,8 +20,18 @@ scene.background = new THREE.Color(0x203040);
 
 // camera
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.001, 100);
-camera.position.set(0.5, 0.2, 10);
+camera.position.set(0.5, 0.2, 15);
 camera.lookAt(0, 0, 0);
+
+
+const loader = new RGBELoader();
+loader.load('assets/plains_sunset_4k.hdr', (texture) => {
+    texture.mapping = THREE.EquirectangularReflectionMapping;
+    scene.environment = texture;
+    scene.background = texture;
+    // … optionally dispose, etc
+});
+
 
 // renderer
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -125,10 +69,12 @@ function buildAirfoilMesh() {
     geom.translate(0, 0, - (params.depth * params.scale) / 2);
 
     const mat = new THREE.MeshStandardMaterial({
-        color: 0x156289,
-        metalness: 0.2,
-        roughness: 0.6,
-        side: THREE.DoubleSide,
+        color: 0xb0c4de,       // hafif mavi-gri, alüminyum boya hissi
+        metalness: 0.9,        // metalik yansımaları güçlü
+        roughness: 0.25,       // çok parlak değil, biraz dağınık
+        envMapIntensity: 1.0,  // HDRI ortamdan gelen yansımayı güçlü yap
+        clearcoat: 0.6,        // üst katman parlaklığı (otomotiv/kanat boyası efekti)
+        clearcoatRoughness: 0.1,
     });
     const mesh = new THREE.Mesh(geom, mat);
     mesh.castShadow = true;
@@ -146,14 +92,65 @@ function buildAirfoilMesh() {
 let foil = buildAirfoilMesh();
 scene.add(foil);
 
+addSpanMorphUI(params, foil, naca4Coordinates);
 // reference axes
 const axes = new THREE.AxesHelper(0.5 * params.scale);
 scene.add(axes);
 
-// grid
-const grid = new THREE.GridHelper(4 * params.scale, 20, 0x222222, 0x111111);
-grid.rotation.x = Math.PI / 2;
-scene.add(grid);
+// draw colored arrow axes and labeled sprites for X, Y, Z
+(function addLabeledAxes() {
+    const axisLen = 0.6 * params.scale;
+    const headLength = 0.08 * params.scale;
+    const headWidth = 0.04 * params.scale;
+
+    const arrowX = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 0), axisLen, 0xff0000, headLength, headWidth);
+    const arrowY = new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 0), axisLen, 0x00ff00, headLength, headWidth);
+    const arrowZ = new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 0), axisLen, 0x0000ff, headLength, headWidth);
+
+    scene.add(arrowX, arrowY, arrowZ);
+
+    function makeLabel(text, color) {
+        const size = 256;
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, size, size);
+
+        // background optional for readability
+        ctx.font = `${Math.floor(size * 0.05)}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+
+
+        // fill
+        ctx.fillStyle = color;
+        ctx.fillText(text, size / 2, size / 2);
+
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.needsUpdate = true;
+        const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false, depthWrite: false, sizeAttenuation: false });
+        const sprite = new THREE.Sprite(mat);
+        const s = 0.16 * params.scale;
+        sprite.scale.set(s, s, 1);
+        return sprite;
+    }
+
+    const labelX = makeLabel('X', '#ff4444');
+    labelX.position.set(axisLen * 1.08, 0, 0);
+    const labelY = makeLabel('Y', '#44ff44');
+    labelY.position.set(0, axisLen * 1.08, 0);
+    const labelZ = makeLabel('Z', '#4444ff');
+    labelZ.position.set(0, 0, axisLen * 1.08);
+
+    scene.add(labelX, labelY, labelZ);
+})();
+
+// // grid
+// const grid = new THREE.GridHelper(4 * params.scale, 20, 0x222222, 0x111111);
+// grid.rotation.x = Math.PI / 2;
+// scene.add(grid);
 
 window.addEventListener('resize', onWindowResize);
 function onWindowResize() {

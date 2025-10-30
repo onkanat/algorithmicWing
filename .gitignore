@@ -1,0 +1,77 @@
+# Genel
+.DS_Store
+Thumbs.db
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log
+
+# Ortam değişkenleri / gizli bilgiler
+.env
+.env.*
+.local.env
+
+# Node.js / JS
+node_modules/
+dist/
+build/
+out/
+*.tgz
+.cache/
+.tmp/
+
+# TypeScript
+*.tsbuildinfo
+
+# Test / coverage
+coverage/
+nyc_output/
+
+# Paket yöneticileri
+# package-lock.json ve pnpm-lock.yaml genelde versiyon kontrolüne alınır — gerektiğinde yorum satırını kaldırın
+# package-lock.json
+# pnpm-lock.yaml
+# yarn.lock
+
+# IDE / editörler
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# JetBrains
+*.iml
+*.iws
+/out/
+
+# Sistem / geçici dosyalar
+*.tmp
+*.swp
+*.swo
+*.bak
+
+# Python (varsa)
+__pycache__/
+*.pyc
+venv/
+.envvenv/
+
+# Java / build araçları
+target/
+*.class
+
+# Go
+bin/
+*.exe
+*.out
+
+# Diğer derlenmiş dosyalar
+*.o
+*.obj
+
+# Proje özel (gerektiğinde ekleyin)
+# .next/
+# .expo/
+# .vercel/

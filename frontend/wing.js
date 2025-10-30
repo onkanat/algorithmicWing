@@ -61,6 +61,7 @@ function buildAirfoilMesh() {
         depth: params.depth,
         bevelEnabled: false,
         steps: 1,
+        curveSegments: params.points,
     };
     const geom = new THREE.ExtrudeGeometry(shape, extrudeSettings);
     geom.scale(params.scale, params.scale, params.scale);
@@ -69,12 +70,13 @@ function buildAirfoilMesh() {
     geom.translate(0, 0, - (params.depth * params.scale) / 2);
 
     const mat = new THREE.MeshStandardMaterial({
-        color: 0xb0c4de,       // hafif mavi-gri, alüminyum boya hissi
-        metalness: 0.9,        // metalik yansımaları güçlü
-        roughness: 0.25,       // çok parlak değil, biraz dağınık
-        envMapIntensity: 1.0,  // HDRI ortamdan gelen yansımayı güçlü yap
-        clearcoat: 0.6,        // üst katman parlaklığı (otomotiv/kanat boyası efekti)
+        color: 0xb0c4de,
+        metalness: 0.9,
+        roughness: 0.25,
+        envMapIntensity: 1.0,
+        clearcoat: 0.6,
         clearcoatRoughness: 0.1,
+        side: THREE.DoubleSide, // üst-alt görünür olsun
     });
     const mesh = new THREE.Mesh(geom, mat);
     mesh.castShadow = true;
@@ -82,10 +84,10 @@ function buildAirfoilMesh() {
 
     // wireframe
     const geo_wire = new THREE.EdgesGeometry(geom);
-    const line = new THREE.LineSegments(geo_wire, new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 1 }));
+    // const line = new THREE.LineSegments(geo_wire, new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 1 }));
     const group = new THREE.Group();
     group.add(mesh);
-    group.add(line);
+    // group.add(line);
     return group;
 }
 
@@ -291,6 +293,8 @@ function updateNACA(code) {
     foil.geometry?.dispose?.();
     foil = buildAirfoilMesh();
     scene.add(foil);
+    addSpanMorphUI(params, foil, naca4Coordinates);
+
 }
 
 function animate() {

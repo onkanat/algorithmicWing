@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { addSpanMorphUI } from './utils.js';
 import { naca4Coordinates } from './nacaprofile.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+import { animateFoil } from './animate.foil.js';
 
 
 
@@ -20,7 +21,7 @@ scene.background = new THREE.Color(0x203040);
 
 // camera
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.001, 100);
-camera.position.set(0.5, 0.2, 15);
+camera.position.set(0.5, 0.2, 30);
 camera.lookAt(0, 0, 0);
 
 
@@ -309,7 +310,7 @@ function onWindowResize() {
     panel.appendChild(makeRow('Scale', scaleInput));
     panel.appendChild(applyBtn);
 
-    document.body.appendChild(panel);
+    // document.body.appendChild(panel);
 
     // apply button (reads numeric inputs, sanitizes, updates params and rebuilds)
     applyBtn.addEventListener('click', () => {
@@ -369,4 +370,4 @@ function animate() {
     controls.update();
     renderer.render(scene, camera);
 }
-animate();
+animateFoil(scene, foil, renderer, camera, 10, 60);

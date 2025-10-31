@@ -9,6 +9,12 @@ export function animateFoil(scene, foil, renderer, camera, duration = 10, fps = 
         naca: '4430', chord: 1.0, points: 200, depth: 3, scale: 3.0
     }, foil, naca4Coordinates);
 
+    // --- Mirror the right wing ---
+    const rightWing = foil.clone();
+    rightWing.scale.z = -1; // Mirror along span axis
+    rightWing.position.z = -foil.position.z - 10; // offset to the other side
+    scene.add(rightWing);
+
     // initial values (morph)
     let startPercent = 0.5;
     let thicknessFactor = 1.0;
@@ -129,7 +135,7 @@ export function animateFoil(scene, foil, renderer, camera, duration = 10, fps = 
         } else {
             try {
                 controller = addSpanMorphUI({
-                    naca: newNacaStr, chord: 1.0, points: 200, depth: 3, scale: 3.0
+                    naca: newNacaStr, chord: 1.7, points: 200, depth: 3, scale: 3.0
                 }, foil, naca4Coordinates);
             } catch (err) {
                 console.warn('NACA update failed:', err);

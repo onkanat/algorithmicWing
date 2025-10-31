@@ -173,7 +173,7 @@ export function addSpanMorphUI(params, foil, naca4Coordinates) {
     panel.appendChild(applyBtn);
     panel.appendChild(resetBtn);
 
-    document.body.appendChild(panel);
+    // document.body.appendChild(panel);
 
     applyBtn.addEventListener('click', () => {
         const start = Math.max(0, Math.min(100, parseFloat(startInput.value) || 50)) / 100;

@@ -15,6 +15,11 @@ export function animateFoil(scene, foil, renderer, camera, duration = 10, fps = 
     rightWing.position.z = -foil.position.z - 10; // offset to the other side
     scene.add(rightWing);
 
+    // Create a second controller for the right wing so it can be morphed independently
+    let rightController = addSpanMorphUI({
+        naca: '4430', chord: 1.0, points: 200, depth: 3, scale: 3.0
+    }, rightWing, naca4Coordinates);
+
     // initial values (morph)
     let startPercent = 0.5;
     let thicknessFactor = 1.0;
@@ -132,11 +137,17 @@ export function animateFoil(scene, foil, renderer, camera, duration = 10, fps = 
 
         if (typeof controller.setNaca === 'function') {
             controller.setNaca(newNacaStr);
+            if (typeof rightController.setNaca === 'function') {
+                rightController.setNaca(newNacaStr);
+            }
         } else {
             try {
                 controller = addSpanMorphUI({
                     naca: newNacaStr, chord: 1.7, points: 200, depth: 3, scale: 3.0
                 }, foil, naca4Coordinates);
+                rightController = addSpanMorphUI({
+                    naca: newNacaStr, chord: 1.7, points: 200, depth: 3, scale: 3.0
+                }, rightWing, naca4Coordinates);
             } catch (err) {
                 console.warn('NACA update failed:', err);
             }
@@ -168,6 +179,7 @@ export function animateFoil(scene, foil, renderer, camera, duration = 10, fps = 
 
         applyNacaIfChanged();
         controller.applySpanMorph(startPercent, thicknessFactor, 40, shiftAmount, dihedralAngle);
+        rightController.applySpanMorph(startPercent, thicknessFactor, 40, shiftAmount, dihedralAngle);
 
         renderer.render(scene, camera);
 

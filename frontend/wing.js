@@ -370,4 +370,5 @@ function animate() {
     controls.update();
     renderer.render(scene, camera);
 }
-animateFoil(scene, foil, renderer, camera, 10, 60);
+// Gelişmiş 30 saniyelik sinematik animasyon (Z-axis roll efekti ile)
+animateFoil(scene, foil, renderer, camera, 30, 60);

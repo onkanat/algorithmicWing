@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { addSpanMorphUI } from './utils.js';
 import { naca4Coordinates } from './nacaprofile.js';
 
-export function animateFoil(scene, foil, renderer, camera, duration = 10, fps = 60) {
+export function animateFoil(scene, foil, renderer, camera, duration = 30, fps = 60) {
     // controller ile span morph ve dihedral kontrolü
     let controller = addSpanMorphUI({
         naca: '4430', chord: 1.0, points: 200, depth: 3, scale: 3.0
@@ -19,6 +19,14 @@ export function animateFoil(scene, foil, renderer, camera, duration = 10, fps = 
     let rightController = addSpanMorphUI({
         naca: '4430', chord: 1.0, points: 200, depth: 3, scale: 3.0
     }, rightWing, naca4Coordinates);
+
+    // ✨ CHARMING EFFECT 1: Dynamic Directional Light (Kamera ile hareket eden ışık)
+    const dynamicLight = new THREE.DirectionalLight(0xffd4a3, 2);
+    scene.add(dynamicLight);
+
+    // ✨ CHARMING EFFECT 2: Rim Light (Kenar ışığı)
+    const rimLight = new THREE.DirectionalLight(0x4488ff, 1.5);
+    scene.add(rimLight);
 
     // initial values (morph)
     let startPercent = 0.5;
@@ -56,6 +64,99 @@ export function animateFoil(scene, foil, renderer, camera, duration = 10, fps = 
     function randomRange(min, max) { return min + Math.random() * (max - min); }
     function randomInt(min, max) { return Math.floor(randomRange(min, max + 1)); }
 
+    // --- Cinematic Camera Animation ---
+    const totalFrames = duration * fps;
+    const cameraTarget = new THREE.Vector3(0, 0, 0); // Wing merkezine bak
+
+    // Initial camera settings (save original position)
+    const initialCameraPos = camera.position.clone();
+    const initialFOV = camera.fov; // Save original FOV
+
+    function updateCinematicCamera(progress) {
+        // ✨ CHARMING EFFECT: Ease-in/ease-out (smooth başlangıç ve bitiş)
+        // https://easings.net/#easeInOutCubic
+        const eased = progress < 0.5
+            ? 4 * progress * progress * progress
+            : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+        // Ana animasyon hala linear progress kullanıyor ama bazı efektler eased kullanacak
+
+        // 30 SANİYELİK YAVAŞ ROTASYON: Daha uzun, daha gelişmiş hareket
+        const fastAngle = progress * Math.PI * 2.5;  // 1.25 tam tur (30 saniyede)
+        const slowAngle = progress * Math.PI * 1; // Yavaş spiral
+
+        // ARTTIRILMIŞ YÜKSEKLIK: Daha fazla yukarı-aşağı hareket
+        const heightWave1 = Math.sin(progress * Math.PI * 2.5) * 10;  // Daha geniş dalga
+        const heightWave2 = Math.cos(progress * Math.PI * 4) * 5;  // İkinci dalga artırıldı
+        const heightWave3 = Math.sin(progress * Math.PI * 6) * 2.5;  // Üçüncü detay dalgası
+
+        // Dynamic zoom: başta uzak, ortada yakın, sonda tekrar uzak (30 saniyeye yayılmış)
+        const zoomCurve = Math.sin(progress * Math.PI); // 0→1→0 curve
+        const radius = 30 - zoomCurve * 14; // 30→16→30 (daha geniş aralık)
+
+        // ARTTIRILMIŞ DİNAMİK YÜKSEKLİK: Daha fazla varyasyon
+        const baseHeight = 10;
+        const height = baseHeight + heightWave1 + heightWave2 + heightWave3;
+
+        // Diagonal orbit with layered motion (30 saniyeye yayılmış)
+        const x = Math.cos(fastAngle) * radius + Math.sin(slowAngle) * 5;
+        const z = Math.sin(fastAngle) * radius + Math.cos(slowAngle) * 5;
+        const y = height;
+
+        // Smooth interpolation to new position (daha smooth için azaltıldı)
+        const smoothness = 0.04; // Daha düşük = daha smooth (30 saniye için)
+        camera.position.x += (x - camera.position.x) * smoothness;
+        camera.position.y += (y - camera.position.y) * smoothness;
+        camera.position.z += (z - camera.position.z) * smoothness;
+
+        // ✨ YENİ: Z-Axis Roll (Kamera eğilme hareketi)
+        // Kamera Z ekseni etrafında hafifçe döner (tilt/roll efekti)
+        const rollAngle = Math.sin(progress * Math.PI * 3) * 0.15; // ±0.15 radyan (~8.5°)
+        const tiltAngle = Math.cos(progress * Math.PI * 2.5) * 0.1; // ±0.1 radyan (~5.7°)
+
+        // Kamera rotasyonunu ayarla
+        camera.rotation.z = rollAngle; // Roll (yatay eğilme)
+
+        // Up vektörünü ayarla (daha dinamik bakış)
+        const upVector = new THREE.Vector3(
+            Math.sin(rollAngle) * 0.3,
+            1,
+            Math.cos(rollAngle) * 0.3
+        );
+        camera.up.copy(upVector.normalize());
+
+        // Dynamic FOV (Field of View) for dramatic effect (30 saniye için optimize)
+        const fovVariation = Math.sin(progress * Math.PI * 0.7) * 15; // ±15 degrees, daha dramatik
+        const targetFOV = initialFOV + fovVariation;
+        camera.fov += (targetFOV - camera.fov) * 0.025; // Daha yavaş FOV geçişi
+        camera.updateProjectionMatrix();
+
+        // Camera target'a daha fazla offset (daha dinamik görünüm)
+        const targetOffset = new THREE.Vector3(
+            Math.sin(progress * Math.PI * 2) * 4,  // Daha geniş X hareketi
+            Math.cos(progress * Math.PI * 2.5) * 3,    // Daha fazla Y hareketi
+            Math.sin(progress * Math.PI * 2.2) * 2 // Z ekseni hareketi artırıldı
+        );
+        const finalTarget = cameraTarget.clone().add(targetOffset);
+
+        // Her zaman wing'e bak (ama daha dinamik hareket eden hedefle)
+        camera.lookAt(finalTarget);
+
+        // ✨ CHARMING EFFECT: Dinamik ışıklandırma (kamera ile hareket eder)
+        // Ana ışık kameranın arkasından gelir
+        dynamicLight.position.copy(camera.position);
+        dynamicLight.position.y += 5; // Biraz daha yukarıda
+
+        // Rim light karşı taraftan (kenar ışığı)
+        rimLight.position.set(-camera.position.x, camera.position.y + 3, -camera.position.z);
+
+        // ✨ CHARMING EFFECT: Dinamik ışık rengi (gün batımı efekti)
+        const timeOfDay = Math.sin(progress * Math.PI); // 0→1→0
+        const sunsetColor = new THREE.Color();
+        sunsetColor.setHSL(0.08 + timeOfDay * 0.05, 0.8, 0.5 + timeOfDay * 0.2); // Turuncu-sarı geçiş
+        dynamicLight.color = sunsetColor;
+    }
+
     function pickRandomNacaNums() {
         return {
             M: randomInt(0, 8),
@@ -80,6 +181,19 @@ export function animateFoil(scene, foil, renderer, camera, duration = 10, fps = 
     infoDiv.style.pointerEvents = 'none';
     infoDiv.style.boxShadow = '0 0 20px lime, 0 0 40px lime';
     document.body.appendChild(infoDiv);
+
+    // ✨ CHARMING EFFECT 4: Cinematic Vignette Overlay
+    const vignetteDiv = document.createElement('div');
+    vignetteDiv.style.position = 'fixed';
+    vignetteDiv.style.top = '0';
+    vignetteDiv.style.left = '0';
+    vignetteDiv.style.width = '100%';
+    vignetteDiv.style.height = '100%';
+    vignetteDiv.style.pointerEvents = 'none';
+    vignetteDiv.style.background = 'radial-gradient(circle, transparent 40%, rgba(0,0,0,0.6) 100%)';
+    vignetteDiv.style.zIndex = '999';
+    vignetteDiv.style.mixBlendMode = 'multiply';
+    document.body.appendChild(vignetteDiv);
 
     // helper function to create animated bars
     function createBar(label, value, max = 1, color = 'lime') {
@@ -107,12 +221,33 @@ export function animateFoil(scene, foil, renderer, camera, duration = 10, fps = 
     }
 
     function updateInfoDisplay() {
+        const cameraDistance = camera.position.length().toFixed(1);
+        const cameraHeight = camera.position.y.toFixed(1);
+        const cameraAngle = ((frameCounter / totalFrames) * 450).toFixed(0); // 1.25 tam tur için 450°
+        const rollAngle = (camera.rotation.z * 180 / Math.PI).toFixed(1); // Roll açısı derece cinsinden
+        const progressPercent = ((frameCounter / totalFrames) * 100).toFixed(0);
+
+        // ✨ CHARMING: HUD rengi animasyon ilerlemesine göre değişiyor
+        const hudHue = (frameCounter / totalFrames) * 120; // 0 (kırmızı) → 120 (yeşil)
+        const hudColor = `hsl(${hudHue + 120}, 100%, 60%)`; // Lime'dan cyan'a
+
         infoDiv.innerHTML = `
         <div style="margin-bottom:10px;"><strong>NACA:</strong> ${formatNaca(currentNacaNums)}</div>
-        ${createBar('Cranked Wing', startPercent, 1)}
-        ${createBar('Taper Ratio', thicknessFactor, 1)}
+        ${createBar('Cranked Wing', startPercent, 1, hudColor)}
+        ${createBar('Taper Ratio', thicknessFactor, 1, hudColor)}
         ${createBar('Cranked amount', shiftAmount, 2, 'cyan')}
         ${createBar('Dihedral °', dihedralAngle * 180 / Math.PI, 90, 'magenta')}
+        <div style="margin-top:12px;padding-top:12px;border-top:1px solid rgba(0,255,0,0.3);">
+            <div style="font-size:11px;opacity:0.8;margin-bottom:4px;">
+                📹 Cam: ${cameraDistance}m | ${cameraAngle}° | ↕ ${cameraHeight}m
+            </div>
+            <div style="font-size:10px;opacity:0.6;">
+                🎬 Roll: ${rollAngle}° | ⏱️ ${(frameCounter / fps).toFixed(1)}s / ${duration}s
+            </div>
+            <div style="margin-top:8px;background:rgba(0,255,0,0.1);border-radius:4px;overflow:hidden;">
+                <div style="width:${progressPercent}%;height:4px;background:${hudColor};transition:width 0.1s;box-shadow:0 0 10px ${hudColor};"></div>
+            </div>
+        </div>
     `;
     }
 
@@ -157,6 +292,12 @@ export function animateFoil(scene, foil, renderer, camera, duration = 10, fps = 
 
     function animate() {
         requestAnimationFrame(animate);
+
+        // Calculate animation progress (0 to 1)
+        const progress = Math.min(1, frameCounter / totalFrames);
+
+        // Update cinematic camera movement
+        updateCinematicCamera(progress);
 
         if (frameCounter % framesPerTarget === 0) {
             targetStart = randomRange(0.01, 1);

@@ -370,5 +370,12 @@ function animate() {
     controls.update();
     renderer.render(scene, camera);
 }
-// Gelişmiş 30 saniyelik sinematik animasyon (Z-axis roll efekti ile)
-animateFoil(scene, foil, renderer, camera, 30, 60);
+
+// 🎥 Sinematik Kamera Animasyonu + Manuel Kontroller
+// Kamera otomatik döner, parametreler sağdaki UI'dan kontrol edilir
+// Normal görünüme dönmek için aşağıdaki satırı yorum yap ve aşağıdaki animate() satırının yorumunu kaldır
+// animate();  // Normal mod: Mouse ile kamera kontrolü
+
+// Sinematik mod: Otomatik kamera + Manuel kanat kontrolü
+// OrbitControls'u da gönderiyoruz ki animasyon bitince tekrar aktif olabilsin
+animateFoil(scene, foil, renderer, camera, controls, 30, 60);

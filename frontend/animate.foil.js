@@ -3,7 +3,10 @@ import * as THREE from 'three';
 import { addSpanMorphUI } from './utils.js';
 import { naca4Coordinates } from './nacaprofile.js';
 
-export function animateFoil(scene, foil, renderer, camera, duration = 30, fps = 60) {
+export function animateFoil(scene, foil, renderer, camera, controls, duration = 30, fps = 60) {
+    // OrbitControls'u devre dışı bırak (kamera animasyonu sırasında)
+    controls.enabled = false;
+
     // controller ile span morph ve dihedral kontrolü
     let controller = addSpanMorphUI({
         naca: '4430', chord: 1.0, points: 200, depth: 3, scale: 3.0
@@ -28,41 +31,14 @@ export function animateFoil(scene, foil, renderer, camera, duration = 30, fps = 
     const rimLight = new THREE.DirectionalLight(0x4488ff, 1.5);
     scene.add(rimLight);
 
-    // initial values (morph)
+    // Kullanıcı kontrollü parametreler (UI'dan değişecek)
     let startPercent = 0.5;
     let thicknessFactor = 1.0;
     let shiftAmount = 0.0;
     let dihedralAngle = 0.0;
+    let nacaCode = '4430';
 
-    // ----- NACA numeric representation (M P TT) -----
-    function parseNaca(n) {
-        const s = String(n).padStart(4, '0');
-        return {
-            M: parseInt(s[0], 10),
-            P: parseInt(s[1], 10),
-            TT: parseInt(s.slice(2, 4), 10)
-        };
-    }
-    function formatNaca({ M, P, TT }) {
-        const tt = String(Math.max(0, Math.min(99, Math.round(TT)))).padStart(2, '0');
-        return `${Math.round(M)}${Math.round(P)}${tt}`;
-    }
-
-    let currentNacaNums = parseNaca('4430');
-    let targetNacaNums = { ...currentNacaNums };
-    let lastAppliedNaca = formatNaca(currentNacaNums);
-
-    // animation targets for morph (smooth random)
-    let targetStart = startPercent;
-    let targetThickness = thicknessFactor;
-    let targetShift = shiftAmount;
-    let targetDihedral = dihedralAngle;
-
-    const framesPerTarget = 120;
     let frameCounter = 0;
-
-    function randomRange(min, max) { return min + Math.random() * (max - min); }
-    function randomInt(min, max) { return Math.floor(randomRange(min, max + 1)); }
 
     // --- Cinematic Camera Animation ---
     const totalFrames = duration * fps;
@@ -157,13 +133,172 @@ export function animateFoil(scene, foil, renderer, camera, duration = 30, fps = 
         dynamicLight.color = sunsetColor;
     }
 
-    function pickRandomNacaNums() {
-        return {
-            M: randomInt(0, 8),
-            P: randomInt(0, 9),
-            TT: randomInt(1, 66)
-        };
+    // 🎮 UI KONTROL PANELİ - Kullanıcı Parametreleri
+    const controlPanel = document.createElement('div');
+    Object.assign(controlPanel.style, {
+        position: 'absolute',
+        top: '20px',
+        right: '20px',
+        width: '280px',
+        background: 'rgba(20,30,40,0.95)',
+        color: '#fff',
+        fontFamily: 'monospace',
+        fontSize: '13px',
+        padding: '20px',
+        borderRadius: '12px',
+        border: '2px solid #00ff00',
+        zIndex: '10000',
+        boxShadow: '0 0 20px rgba(0,255,0,0.3)'
+    });
+
+    function createSlider(label, min, max, step, defaultValue, unit = '') {
+        const container = document.createElement('div');
+        container.style.marginBottom = '15px';
+
+        const labelDiv = document.createElement('div');
+        labelDiv.style.marginBottom = '5px';
+        labelDiv.style.color = '#00ff00';
+        labelDiv.innerHTML = `<strong>${label}</strong>`;
+
+        const valueDisplay = document.createElement('span');
+        valueDisplay.style.float = 'right';
+        valueDisplay.style.color = '#0ff';
+        valueDisplay.textContent = defaultValue.toFixed(2) + unit;
+        labelDiv.appendChild(valueDisplay);
+
+        const slider = document.createElement('input');
+        slider.type = 'range';
+        slider.min = min;
+        slider.max = max;
+        slider.step = step;
+        slider.value = defaultValue;
+        slider.style.width = '100%';
+        slider.style.cursor = 'pointer';
+
+        container.appendChild(labelDiv);
+        container.appendChild(slider);
+
+        return { container, slider, valueDisplay, unit };
     }
+
+    function createTextInput(label, defaultValue) {
+        const container = document.createElement('div');
+        container.style.marginBottom = '15px';
+
+        const labelDiv = document.createElement('div');
+        labelDiv.style.marginBottom = '5px';
+        labelDiv.style.color = '#00ff00';
+        labelDiv.innerHTML = `<strong>${label}</strong>`;
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = defaultValue;
+        input.maxLength = 4;
+        Object.assign(input.style, {
+            width: '100%',
+            padding: '8px',
+            background: 'rgba(0,0,0,0.5)',
+            border: '1px solid #0ff',
+            borderRadius: '4px',
+            color: '#0ff',
+            fontFamily: 'monospace',
+            fontSize: '14px',
+            textAlign: 'center'
+        });
+
+        container.appendChild(labelDiv);
+        container.appendChild(input);
+
+        return { container, input };
+    }
+
+    // NACA Input
+    const nacaInput = createTextInput('NACA Airfoil', nacaCode);
+    controlPanel.appendChild(nacaInput.container);
+
+    // Cranked Wing Slider
+    const crankedSlider = createSlider('Cranked Wing', 0, 1, 0.01, startPercent);
+    controlPanel.appendChild(crankedSlider.container);
+
+    // Taper Ratio Slider
+    const taperSlider = createSlider('Taper Ratio', 0.1, 1, 0.01, thicknessFactor);
+    controlPanel.appendChild(taperSlider.container);
+
+    // Cranked Amount Slider
+    const shiftSlider = createSlider('Cranked Amount', 0, 2, 0.01, shiftAmount);
+    controlPanel.appendChild(shiftSlider.container);
+
+    // Dihedral Angle Slider
+    const dihedralSlider = createSlider('Dihedral Angle', -45, 65, 1, dihedralAngle * 180 / Math.PI, '°');
+    controlPanel.appendChild(dihedralSlider.container);
+
+    document.body.appendChild(controlPanel);
+
+    // NACA değişimi için rebuild fonksiyonu
+    function rebuildWithNewNACA(newNaca) {
+        const nacaStr = String(newNaca).padStart(4, '0');
+
+        // Sol kanat için yeni controller
+        controller = addSpanMorphUI({
+            naca: nacaStr, chord: 1.0, points: 200, depth: 3, scale: 3.0
+        }, foil, naca4Coordinates);
+
+        // Sağ kanat için yeni controller
+        rightController = addSpanMorphUI({
+            naca: nacaStr, chord: 1.0, points: 200, depth: 3, scale: 3.0
+        }, rightWing, naca4Coordinates);
+
+        // Mevcut morph parametrelerini uygula
+        controller.applySpanMorph(startPercent, thicknessFactor, 40, shiftAmount, dihedralAngle);
+        rightController.applySpanMorph(startPercent, thicknessFactor, 40, shiftAmount, dihedralAngle);
+    }
+
+    // Event listeners for UI controls
+    nacaInput.input.addEventListener('input', (e) => {
+        nacaCode = e.target.value.padStart(4, '0');
+    });
+
+    // NACA input için Enter veya blur eventi
+    nacaInput.input.addEventListener('blur', (e) => {
+        rebuildWithNewNACA(e.target.value);
+    });
+
+    nacaInput.input.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            rebuildWithNewNACA(e.target.value);
+            e.target.blur(); // Focus'u kaldır
+        }
+    });
+
+    crankedSlider.slider.addEventListener('input', (e) => {
+        startPercent = parseFloat(e.target.value);
+        crankedSlider.valueDisplay.textContent = startPercent.toFixed(2);
+        controller.applySpanMorph(startPercent, thicknessFactor, 40, shiftAmount, dihedralAngle);
+        rightController.applySpanMorph(startPercent, thicknessFactor, 40, shiftAmount, dihedralAngle);
+    });
+
+    taperSlider.slider.addEventListener('input', (e) => {
+        thicknessFactor = parseFloat(e.target.value);
+        taperSlider.valueDisplay.textContent = thicknessFactor.toFixed(2);
+        controller.applySpanMorph(startPercent, thicknessFactor, 40, shiftAmount, dihedralAngle);
+        rightController.applySpanMorph(startPercent, thicknessFactor, 40, shiftAmount, dihedralAngle);
+    });
+
+    shiftSlider.slider.addEventListener('input', (e) => {
+        shiftAmount = parseFloat(e.target.value);
+        shiftSlider.valueDisplay.textContent = shiftAmount.toFixed(2);
+        controller.applySpanMorph(startPercent, thicknessFactor, 40, shiftAmount, dihedralAngle);
+        rightController.applySpanMorph(startPercent, thicknessFactor, 40, shiftAmount, dihedralAngle);
+    });
+
+    dihedralSlider.slider.addEventListener('input', (e) => {
+        const degrees = parseFloat(e.target.value);
+        dihedralAngle = degrees * Math.PI / 180;
+        dihedralSlider.valueDisplay.textContent = degrees.toFixed(0) + '°';
+        controller.applySpanMorph(startPercent, thicknessFactor, 40, shiftAmount, dihedralAngle);
+        rightController.applySpanMorph(startPercent, thicknessFactor, 40, shiftAmount, dihedralAngle);
+    });
+
     // --- HUD Overlay ---
     const infoDiv = document.createElement('div');
     infoDiv.style.position = 'absolute';
@@ -195,31 +330,6 @@ export function animateFoil(scene, foil, renderer, camera, duration = 30, fps = 
     vignetteDiv.style.mixBlendMode = 'multiply';
     document.body.appendChild(vignetteDiv);
 
-    // helper function to create animated bars
-    function createBar(label, value, max = 1, color = 'lime') {
-        const percent = Math.min(100, Math.max(0, value / max * 100));
-        return `
-        <div style="margin-bottom:6px;">
-            <span>${label}</span>
-            <div style="
-                background: rgba(0,0,0,0.3); 
-                width: 100%; 
-                height: 8px; 
-                border-radius:4px; 
-                overflow:hidden;
-                margin-top:2px;">
-                <div style="
-                    width: ${percent}%;
-                    height: 100%;
-                    background: ${color};
-                    transition: width 0.1s ease;
-                    box-shadow: 0 0 8px ${color};
-                "></div>
-            </div>
-        </div>
-    `;
-    }
-
     function updateInfoDisplay() {
         const cameraDistance = camera.position.length().toFixed(1);
         const cameraHeight = camera.position.y.toFixed(1);
@@ -232,62 +342,21 @@ export function animateFoil(scene, foil, renderer, camera, duration = 30, fps = 
         const hudColor = `hsl(${hudHue + 120}, 100%, 60%)`; // Lime'dan cyan'a
 
         infoDiv.innerHTML = `
-        <div style="margin-bottom:10px;"><strong>NACA:</strong> ${formatNaca(currentNacaNums)}</div>
-        ${createBar('Cranked Wing', startPercent, 1, hudColor)}
-        ${createBar('Taper Ratio', thicknessFactor, 1, hudColor)}
-        ${createBar('Cranked amount', shiftAmount, 2, 'cyan')}
-        ${createBar('Dihedral °', dihedralAngle * 180 / Math.PI, 90, 'magenta')}
-        <div style="margin-top:12px;padding-top:12px;border-top:1px solid rgba(0,255,0,0.3);">
-            <div style="font-size:11px;opacity:0.8;margin-bottom:4px;">
-                📹 Cam: ${cameraDistance}m | ${cameraAngle}° | ↕ ${cameraHeight}m
-            </div>
-            <div style="font-size:10px;opacity:0.6;">
-                🎬 Roll: ${rollAngle}° | ⏱️ ${(frameCounter / fps).toFixed(1)}s / ${duration}s
-            </div>
-            <div style="margin-top:8px;background:rgba(0,255,0,0.1);border-radius:4px;overflow:hidden;">
-                <div style="width:${progressPercent}%;height:4px;background:${hudColor};transition:width 0.1s;box-shadow:0 0 10px ${hudColor};"></div>
-            </div>
+        <div style="margin-bottom:10px;"><strong>🎥 Cinematic Mode</strong></div>
+        <div style="margin-bottom:8px;"><strong>NACA:</strong> <span style="color:#0ff;">${nacaCode}</span></div>
+        <div style="font-size:11px;opacity:0.8;margin-bottom:4px;">
+            📹 Distance: ${cameraDistance}m
+        </div>
+        <div style="font-size:11px;opacity:0.8;margin-bottom:4px;">
+            � Angle: ${cameraAngle}° | ↕ ${cameraHeight}m
+        </div>
+        <div style="font-size:11px;opacity:0.8;margin-bottom:8px;">
+            🎬 Roll: ${rollAngle}° | ⏱️ ${(frameCounter / fps).toFixed(1)}s
+        </div>
+        <div style="margin-top:8px;background:rgba(0,255,0,0.1);border-radius:4px;overflow:hidden;">
+            <div style="width:${progressPercent}%;height:4px;background:${hudColor};transition:width 0.1s;box-shadow:0 0 10px ${hudColor};"></div>
         </div>
     `;
-    }
-
-    // MediaRecorder setup
-    const canvasStream = renderer.domElement.captureStream(fps);
-    const recorder = new MediaRecorder(canvasStream);
-    const chunks = [];
-    recorder.ondataavailable = e => chunks.push(e.data);
-    recorder.onstop = () => {
-        const blob = new Blob(chunks, { type: 'video/webm' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'foilAnimation.webm';
-        a.click();
-    };
-    recorder.start();
-
-    function applyNacaIfChanged() {
-        const newNacaStr = formatNaca(currentNacaNums);
-        if (newNacaStr === lastAppliedNaca) return;
-
-        if (typeof controller.setNaca === 'function') {
-            controller.setNaca(newNacaStr);
-            if (typeof rightController.setNaca === 'function') {
-                rightController.setNaca(newNacaStr);
-            }
-        } else {
-            try {
-                controller = addSpanMorphUI({
-                    naca: newNacaStr, chord: 1.7, points: 200, depth: 3, scale: 3.0
-                }, foil, naca4Coordinates);
-                rightController = addSpanMorphUI({
-                    naca: newNacaStr, chord: 1.7, points: 200, depth: 3, scale: 3.0
-                }, rightWing, naca4Coordinates);
-            } catch (err) {
-                console.warn('NACA update failed:', err);
-            }
-        }
-        lastAppliedNaca = newNacaStr;
     }
 
     function animate() {
@@ -299,36 +368,19 @@ export function animateFoil(scene, foil, renderer, camera, duration = 30, fps = 
         // Update cinematic camera movement
         updateCinematicCamera(progress);
 
-        if (frameCounter % framesPerTarget === 0) {
-            targetStart = randomRange(0.01, 1);
-            targetThickness = randomRange(0.1, 1);
-            targetShift = randomRange(0, 1.8);
-            targetDihedral = randomRange(-45, 65) * Math.PI / 180;
-
-            targetNacaNums = pickRandomNacaNums();
-        }
-
-        const smoothFactor = 0.02;
-        startPercent += (targetStart - startPercent) * smoothFactor;
-        thicknessFactor += (targetThickness - thicknessFactor) * smoothFactor;
-        shiftAmount += (targetShift - shiftAmount) * smoothFactor;
-        dihedralAngle += (targetDihedral - dihedralAngle) * smoothFactor;
-
-        currentNacaNums.M += (targetNacaNums.M - currentNacaNums.M) * smoothFactor;
-        currentNacaNums.P += (targetNacaNums.P - currentNacaNums.P) * smoothFactor;
-        currentNacaNums.TT += (targetNacaNums.TT - currentNacaNums.TT) * smoothFactor;
-
-        applyNacaIfChanged();
-        controller.applySpanMorph(startPercent, thicknessFactor, 40, shiftAmount, dihedralAngle);
-        rightController.applySpanMorph(startPercent, thicknessFactor, 40, shiftAmount, dihedralAngle);
+        // Parametreler UI'dan kontrol ediliyor (slider event listeners ile)
+        // Her frame'de sadece render yapıyoruz
 
         renderer.render(scene, camera);
 
         updateInfoDisplay();
 
         frameCounter++;
-        if (frameCounter > duration * fps) {
-            recorder.stop();
+
+        // Animasyon bittiğinde OrbitControls'u geri aç
+        if (frameCounter >= totalFrames) {
+            controls.enabled = true;
+            console.log('🎬 Animasyon tamamlandı! OrbitControls aktif.');
         }
     }
 

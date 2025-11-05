@@ -162,34 +162,17 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
             try {
                     // Compute accurate geometry centroid (vertex-average) for each wing.
                     // This is more robust than bounding-box center when morphing.
+                    /**
+                     * Compute the geometry centroid (vertex-average) of an object
+                     * in world coordinates. Returns null if no vertices found.
+                     */
                     function computeGeometryCentroid(obj) {
-                        const v = new THREE.Vector3();
                         const tmp = new THREE.Vector3();
-                        let count = 0;
-                        obj.traverse((child) => {
-                            if (child.isMesh && child.geometry) {
-                                const geom = child.geometry;
-                                const posAttr = geom.attributes && geom.attributes.position;
-                                if (!posAttr) return;
-                                for (let i = 0; i < posAttr.count; i++) {
-                                    v.fromBufferAttribute(posAttr, i);
-                                    // transform to world space
-                                    tmp.copy(v).applyMatrix4(child.matrixWorld);
-                                    v.add(tmp);
-                                    count++;
-                                }
-                            }
-                        });
-                        if (count === 0) return null;
-                        // v currently holds sum of all positions twice (we added tmp to v each loop),
-                        // so divide by (count * 2). Simpler approach: recompute properly below.
-                        // Recompute properly: accumulate in sum vector
                         const sum = new THREE.Vector3();
                         let n = 0;
                         obj.traverse((child) => {
                             if (child.isMesh && child.geometry) {
-                                const geom = child.geometry;
-                                const posAttr = geom.attributes && geom.attributes.position;
+                                const posAttr = child.geometry.attributes && child.geometry.attributes.position;
                                 if (!posAttr) return;
                                 for (let i = 0; i < posAttr.count; i++) {
                                     tmp.fromBufferAttribute(posAttr, i).applyMatrix4(child.matrixWorld);
@@ -198,8 +181,7 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
                                 }
                             }
                         });
-                        if (n === 0) return null;
-                        return sum.multiplyScalar(1 / n);
+                        return n === 0 ? null : sum.multiplyScalar(1 / n);
                     }
 
                     const c1 = computeGeometryCentroid(foil) || new THREE.Vector3();
@@ -242,18 +224,11 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
     const totalFrames = duration * fps;
     const cameraTarget = new THREE.Vector3(0, 0, 0); // Wing merkezine bak
 
-    // Initial camera settings (save original position)
-    const initialCameraPos = camera.position.clone();
-    const initialFOV = camera.fov; // Save original FOV
+    // Initial camera settings
+    const initialFOV = camera.fov;
 
     function updateCinematicCamera(progress) {
-        // ✨ CHARMING EFFECT: Ease-in/ease-out (smooth başlangıç ve bitiş)
-        // https://easings.net/#easeInOutCubic
-        const eased = progress < 0.5
-            ? 4 * progress * progress * progress
-            : 1 - Math.pow(-2 * progress + 2, 3) / 2;
-
-        // Ana animasyon hala linear progress kullanıyor ama bazı efektler eased kullanacak
+        // Smooth easing curve available for future use
 
         // 30 SANİYELİK YAVAŞ ROTASYON: Daha uzun, daha gelişmiş hareket
         const fastAngle = progress * Math.PI * 2.5;  // 1.25 tam tur (30 saniyede)

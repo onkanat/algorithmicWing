@@ -40,6 +40,7 @@ const startMode = (urlParams.get('mode') || 'normal').toLowerCase();
 
 // THREE.js scene
 const scene = new THREE.Scene();
+// default background color (used when no HDR env is applied or when running with alpha)
 scene.background = new THREE.Color(0x203040);
 
 // camera
@@ -52,15 +53,34 @@ const loader = new RGBELoader();
 loader.load('assets/plains_sunset_4k.hdr', (texture) => {
     texture.mapping = THREE.EquirectangularReflectionMapping;
     scene.environment = texture;
-    scene.background = texture;
+    // Only set the scene background to the HDR texture when in cinematic mode
+    // so normal mode's CSS vignette remains visible (renderer uses alpha there).
+    if (startMode === 'cinematic') {
+        scene.background = texture;
+    }
     // … optionally dispose, etc
 });
 
 
 // renderer
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+// Use alpha on the renderer in normal mode so a CSS background (vignette/radial)
+// behind the canvas can be visible. Cinematic mode keeps an opaque canvas so
+// the HDR background/image covers the whole view.
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: startMode === 'normal' });
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.style.margin = '0';
+
+// If we're in normal mode, use a subtle, centered radial vignette as the
+// page background so the canvas (rendered with transparency) appears more
+// professional and focused on the center. Cinematic mode leaves background
+// to the HDR environment.
+if (startMode === 'normal') {
+    document.body.style.background = 'radial-gradient(circle at center, #2b3640 0%, #14181c 45%, #07080a 100%)';
+    document.body.style.backgroundAttachment = 'fixed';
+    document.body.style.backgroundRepeat = 'no-repeat';
+    document.body.style.backgroundSize = 'cover';
+}
+
 document.body.appendChild(renderer.domElement);
 
 // controls
@@ -255,10 +275,22 @@ scene.add(axes);
     scene.add(labelX, labelY, labelZ);
 })();
 
-// // grid
-// const grid = new THREE.GridHelper(4 * params.scale, 20, 0x222222, 0x111111);
-// grid.rotation.x = Math.PI / 2;
-// scene.add(grid);
+// subtle grid overlay for Normal mode only (keeps cinematic clean)
+let _normalGrid = null;
+if (startMode === 'normal') {
+    const gridSize = 6 * params.scale;
+    const gridDivs = 40;
+    _normalGrid = new THREE.GridHelper(gridSize, gridDivs, 0x2b3036, 0x191b1d);
+    _normalGrid.rotation.x = Math.PI / 2;
+    // make the grid faint and non-obtrusive
+    if (_normalGrid.material) {
+        _normalGrid.material.opacity = 0.06;
+        _normalGrid.material.transparent = true;
+        // render the grid behind the foil by ensuring it's drawn first
+        _normalGrid.renderOrder = 0;
+    }
+    scene.add(_normalGrid);
+}
 
 window.addEventListener('resize', onWindowResize);
 function onWindowResize() {

@@ -305,8 +305,34 @@ function onAxisDoubleClick(evt) {
         .filter(Boolean);
 
     const intersects = _axisRaycaster.intersectObjects(candidates, true);
-    if (!intersects || intersects.length === 0) return;
-    const hit = intersects[0].object;
+    let hit = null;
+    if (intersects && intersects.length > 0) {
+        hit = intersects[0].object;
+    } else {
+        // Fallback: if user clicked near the projected axis label/arrow on screen,
+        // accept that as a hit. This improves double-click sensitivity when
+        // the visible label/arrow is small or the raycast misses.
+        const rect = renderer.domElement.getBoundingClientRect();
+        const px = evt.clientX;
+        const py = evt.clientY;
+        const pickThreshold = 28; // pixels
+        let best = { dist: Infinity, obj: null };
+        for (const obj of candidates) {
+            const wp = new THREE.Vector3();
+            obj.getWorldPosition(wp);
+            const ndc = wp.clone().project(camera);
+            const sx = rect.left + (ndc.x + 1) / 2 * rect.width;
+            const sy = rect.top + (1 - ndc.y) / 2 * rect.height;
+            const dx = sx - px;
+            const dy = sy - py;
+            const d = Math.sqrt(dx * dx + dy * dy);
+            if (d < pickThreshold && d < best.dist) {
+                best = { dist: d, obj };
+            }
+        }
+        if (best.obj) hit = best.obj;
+    }
+    if (!hit) return;
     const axisDir = (hit.userData && hit.userData.axis) ? hit.userData.axis.clone() : null;
     if (!axisDir) return;
 
@@ -338,23 +364,48 @@ function onAxisDoubleClick(evt) {
 
 renderer.domElement.addEventListener('dblclick', onAxisDoubleClick);
 
-// subtle grid overlay for Normal mode only (keeps cinematic clean)
-let _normalGrid = null;
+// subtle grid overlays for Normal mode only (one per principal plane)
+let _grids = [];
+let _gridVisible = true;
 if (startMode === 'normal') {
     const gridSize = 6 * params.scale;
-    // increase grid density by ~35% as requested (was 40)
+    // increase grid density by ~35% as requested (base 40 -> ~54)
     const gridDivs = Math.round(40 * 1.35);
-    _normalGrid = new THREE.GridHelper(gridSize, gridDivs, 0x2b3036, 0x191b1d);
-    _normalGrid.rotation.x = Math.PI / 2;
-    // make the grid faint and non-obtrusive
-    if (_normalGrid.material) {
-        // increase opacity by ~35% from previous 0.06
-        _normalGrid.material.opacity = 0.06 * 1.35;
-        _normalGrid.material.transparent = true;
-        // render the grid behind the foil by ensuring it's drawn first
-        _normalGrid.renderOrder = 0;
+    const baseOpacity = 0.06 * 1.35;
+
+    // XZ plane (horizontal)
+    const gridXZ = new THREE.GridHelper(gridSize, gridDivs, 0x2b3036, 0x191b1d);
+    gridXZ.rotation.x = 0;
+
+    // XY plane (front-facing)
+    const gridXY = new THREE.GridHelper(gridSize, gridDivs, 0x2b3036, 0x191b1d);
+    gridXY.rotation.x = Math.PI / 2;
+
+    // YZ plane (side-facing)
+    const gridYZ = new THREE.GridHelper(gridSize, gridDivs, 0x2b3036, 0x191b1d);
+    gridYZ.rotation.z = Math.PI / 2;
+
+    [_grids[0], _grids[1], _grids[2]] = [gridXZ, gridXY, gridYZ];
+
+    for (const g of _grids) {
+        if (g.material) {
+            g.material.opacity = baseOpacity;
+            g.material.transparent = true;
+        }
+        g.renderOrder = 0;
+        scene.add(g);
     }
-    scene.add(_normalGrid);
+
+    // helper to toggle grids at runtime
+    function setGridVisibility(v) {
+        _gridVisible = !!v;
+        for (const gg of _grids) {
+            gg.visible = _gridVisible;
+        }
+    }
+
+    // expose setter to global scope for UI closure use
+    window.__setGridVisibility = setGridVisibility;
 }
 
 window.addEventListener('resize', onWindowResize);
@@ -443,6 +494,30 @@ function onWindowResize() {
     // Note: Apply button removed — changes are applied automatically
 
     // Note: standalone Reset button removed — Normal button performs reset
+
+    // Grid toggle (Normal mode only): allow quick on/off and keyboard shortcut
+    let gridToggle = null;
+    if (startMode === 'normal' && typeof window.__setGridVisibility === 'function') {
+        gridToggle = document.createElement('button');
+        gridToggle.textContent = _gridVisible ? 'Grid: On' : 'Grid: Off';
+        Object.assign(gridToggle.style, { width: '100%', padding: '6px', marginTop: '6px', cursor: 'pointer', background: '#444', color: '#fff', border: 'none' });
+        gridToggle.addEventListener('click', () => {
+            const next = !_gridVisible;
+            window.__setGridVisibility(next);
+            gridToggle.textContent = next ? 'Grid: On' : 'Grid: Off';
+        });
+        panel.appendChild(gridToggle);
+
+        // keyboard shortcut: 'g' to toggle grid
+        window.addEventListener('keydown', (ev) => {
+            if ((ev.key === 'g' || ev.key === 'G') && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+                ev.preventDefault();
+                const next = !_gridVisible;
+                window.__setGridVisibility(next);
+                if (gridToggle) gridToggle.textContent = next ? 'Grid: On' : 'Grid: Off';
+            }
+        });
+    }
 
     // Mode buttons: switch between normal and cinematic by reloading with ?mode=
     const normalBtn = document.createElement('button');

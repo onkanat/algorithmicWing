@@ -1,16 +1,36 @@
 // animateFoil.js
 import * as THREE from 'three';
 import { addSpanMorphUI } from './utils.js';
-import { naca4Coordinates } from './nacaprofile.js';
+import { naca4Coordinates, naca5Coordinates } from './nacaprofile.js';
 
 export function animateFoil(scene, foil, renderer, camera, controls, duration = 30, fps = 60) {
     // OrbitControls'u devre dışı bırak (kamera animasyonu sırasında)
     controls.enabled = false;
 
-    // controller ile span morph ve dihedral kontrolü
-    let controller = addSpanMorphUI({
-        naca: '4430', chord: 1.0, points: 200, depth: 3, scale: 3.0
-    }, foil, naca4Coordinates);
+    // read initial parameters from URL so cinematic mode mirrors normal mode state
+    let initParams = { naca: '4430', chord: 1.0, points: 200, depth: 3, scale: 3.0 };
+    try {
+        const p = new URLSearchParams(window.location.search);
+        const n = p.get('naca'); if (n) initParams.naca = String(n).replace(/\D/g, '');
+        const chord = parseFloat(p.get('chord')); if (!Number.isNaN(chord)) initParams.chord = chord;
+        const points = parseInt(p.get('points'), 10); if (!Number.isNaN(points)) initParams.points = points;
+        const depth = parseFloat(p.get('depth')); if (!Number.isNaN(depth)) initParams.depth = depth;
+        const scale = parseFloat(p.get('scale')); if (!Number.isNaN(scale)) initParams.scale = scale;
+    } catch (e) { }
+
+    // read span morph params from URL
+    let initSpan = {};
+    try {
+        const p = new URLSearchParams(window.location.search);
+        const s = parseFloat(p.get('start')); if (!Number.isNaN(s)) initSpan.startPercent = Math.max(0, Math.min(1, s));
+        const f = parseFloat(p.get('factor')); if (!Number.isNaN(f)) initSpan.thicknessFactor = f;
+        const slices = parseInt(p.get('slices'), 10); if (!Number.isNaN(slices)) initSpan.slices = slices;
+        const shift = parseFloat(p.get('shift')); if (!Number.isNaN(shift)) initSpan.shiftAmount = shift;
+        const dihedral = parseFloat(p.get('dihedral')); if (!Number.isNaN(dihedral)) initSpan.dihedralAngle = dihedral * Math.PI / 180;
+    } catch (e) { }
+
+    // controller ile span morph ve dihedral kontrolü (no panel)
+    let controller = addSpanMorphUI(initParams, foil, naca4Coordinates, Object.assign({ appendPanel: false }, initSpan));
 
     // --- Mirror the right wing ---
     const rightWing = foil.clone();
@@ -19,9 +39,7 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
     scene.add(rightWing);
 
     // Create a second controller for the right wing so it can be morphed independently
-    let rightController = addSpanMorphUI({
-        naca: '4430', chord: 1.0, points: 200, depth: 3, scale: 3.0
-    }, rightWing, naca4Coordinates);
+    let rightController = addSpanMorphUI(initParams, rightWing, naca4Coordinates, Object.assign({ appendPanel: false }, initSpan));
 
     // ✨ CHARMING EFFECT 1: Dynamic Directional Light (Kamera ile hareket eden ışık)
     const dynamicLight = new THREE.DirectionalLight(0xffd4a3, 2);
@@ -31,12 +49,12 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
     const rimLight = new THREE.DirectionalLight(0x4488ff, 1.5);
     scene.add(rimLight);
 
-    // Kullanıcı kontrollü parametreler (UI'dan değişecek)
-    let startPercent = 0.5;
-    let thicknessFactor = 1.0;
-    let shiftAmount = 0.0;
-    let dihedralAngle = 0.0;
-    let nacaCode = '4430';
+    // Kullanıcı kontrollü parametreler (UI'dan değişecek) — initialize from URL-derived values
+    let startPercent = (typeof initSpan.startPercent === 'number') ? initSpan.startPercent : 0.5;
+    let thicknessFactor = (typeof initSpan.thicknessFactor === 'number') ? initSpan.thicknessFactor : 1.0;
+    let shiftAmount = (typeof initSpan.shiftAmount === 'number') ? initSpan.shiftAmount : 0.0;
+    let dihedralAngle = (typeof initSpan.dihedralAngle === 'number') ? initSpan.dihedralAngle : 0.0;
+    let nacaCode = initParams.naca || '4430';
 
     let frameCounter = 0;
 
@@ -181,7 +199,7 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
         return { container, slider, valueDisplay, unit };
     }
 
-    function createTextInput(label, defaultValue) {
+    function createTextInput(label, defaultValue, maxLen = 4) {
         const container = document.createElement('div');
         container.style.marginBottom = '15px';
 
@@ -193,7 +211,7 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
         const input = document.createElement('input');
         input.type = 'text';
         input.value = defaultValue;
-        input.maxLength = 4;
+        input.maxLength = maxLen;
         Object.assign(input.style, {
             width: '100%',
             padding: '8px',
@@ -213,7 +231,11 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
     }
 
     // NACA Input
-    const nacaInput = createTextInput('NACA Airfoil', nacaCode);
+    // make this input accept 4 or 5 digits (user will type 4-digit normally,
+    // but we allow 5-digit entries for cinematic override)
+    const nacaInput = createTextInput('NACA Airfoil (4 or 5 digits)', nacaCode, 5);
+    // only allow digits while typing
+    nacaInput.input.addEventListener('input', (e) => { e.target.value = e.target.value.replace(/[^0-9]/g, '').slice(0, 5); });
     controlPanel.appendChild(nacaInput.container);
 
     // Cranked Wing Slider
@@ -235,27 +257,47 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
     document.body.appendChild(controlPanel);
 
     // NACA değişimi için rebuild fonksiyonu
+
     function rebuildWithNewNACA(newNaca) {
-        const nacaStr = String(newNaca).padStart(4, '0');
+        const raw = String(newNaca).replace(/\D/g, '');
+        let coordsFunc = naca4Coordinates;
+        let nacaStr = '2412';
+        if (raw.length === 5) {
+            nacaStr = raw;
+            coordsFunc = naca5Coordinates;
+        } else if (raw.length === 4) {
+            nacaStr = raw.padStart(4, '0');
+            coordsFunc = naca4Coordinates;
+        } else {
+            // fallback keep previous
+            nacaStr = controller ? (controller.naca || '2412') : '2412';
+        }
 
-        // Sol kanat için yeni controller
-        controller = addSpanMorphUI({
-            naca: nacaStr, chord: 1.0, points: 200, depth: 3, scale: 3.0
-        }, foil, naca4Coordinates);
+        // Sol kanat için yeni controller (panel eklenmesin)
+        controller = addSpanMorphUI({ naca: nacaStr, chord: initParams.chord, points: initParams.points, depth: initParams.depth, scale: initParams.scale }, foil, coordsFunc, { appendPanel: false });
 
-        // Sağ kanat için yeni controller
-        rightController = addSpanMorphUI({
-            naca: nacaStr, chord: 1.0, points: 200, depth: 3, scale: 3.0
-        }, rightWing, naca4Coordinates);
+        // Sağ kanat için yeni controller (panel eklenmesin)
+        rightController = addSpanMorphUI({ naca: nacaStr, chord: initParams.chord, points: initParams.points, depth: initParams.depth, scale: initParams.scale }, rightWing, coordsFunc, { appendPanel: false });
 
         // Mevcut morph parametrelerini uygula
+        // update local naca code and reapply morphs
+        nacaCode = nacaStr;
         controller.applySpanMorph(startPercent, thicknessFactor, 40, shiftAmount, dihedralAngle);
         rightController.applySpanMorph(startPercent, thicknessFactor, 40, shiftAmount, dihedralAngle);
+
+        // update URL so the new NACA is visible to normal mode when toggling back
+        try {
+            const ps = new URLSearchParams(window.location.search);
+            ps.set('naca', nacaStr);
+            // preserve mode (cinematic)
+            ps.set('mode', 'cinematic');
+            history.replaceState(null, '', '?' + ps.toString());
+        } catch (e) { }
     }
 
     // Event listeners for UI controls
     nacaInput.input.addEventListener('input', (e) => {
-        nacaCode = e.target.value.padStart(4, '0');
+        nacaCode = e.target.value;
     });
 
     // NACA input için Enter veya blur eventi
@@ -275,6 +317,13 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
         crankedSlider.valueDisplay.textContent = startPercent.toFixed(2);
         controller.applySpanMorph(startPercent, thicknessFactor, 40, shiftAmount, dihedralAngle);
         rightController.applySpanMorph(startPercent, thicknessFactor, 40, shiftAmount, dihedralAngle);
+        // persist span morph values to URL so normal mode picks them up
+        try {
+            const ps = new URLSearchParams(window.location.search);
+            ps.set('start', String(startPercent));
+            ps.set('mode', 'cinematic');
+            history.replaceState(null, '', '?' + ps.toString());
+        } catch (e) { }
     });
 
     taperSlider.slider.addEventListener('input', (e) => {
@@ -282,6 +331,12 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
         taperSlider.valueDisplay.textContent = thicknessFactor.toFixed(2);
         controller.applySpanMorph(startPercent, thicknessFactor, 40, shiftAmount, dihedralAngle);
         rightController.applySpanMorph(startPercent, thicknessFactor, 40, shiftAmount, dihedralAngle);
+        try {
+            const ps = new URLSearchParams(window.location.search);
+            ps.set('factor', String(thicknessFactor));
+            ps.set('mode', 'cinematic');
+            history.replaceState(null, '', '?' + ps.toString());
+        } catch (e) { }
     });
 
     shiftSlider.slider.addEventListener('input', (e) => {
@@ -289,6 +344,12 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
         shiftSlider.valueDisplay.textContent = shiftAmount.toFixed(2);
         controller.applySpanMorph(startPercent, thicknessFactor, 40, shiftAmount, dihedralAngle);
         rightController.applySpanMorph(startPercent, thicknessFactor, 40, shiftAmount, dihedralAngle);
+        try {
+            const ps = new URLSearchParams(window.location.search);
+            ps.set('shift', String(shiftAmount));
+            ps.set('mode', 'cinematic');
+            history.replaceState(null, '', '?' + ps.toString());
+        } catch (e) { }
     });
 
     dihedralSlider.slider.addEventListener('input', (e) => {
@@ -297,6 +358,12 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
         dihedralSlider.valueDisplay.textContent = degrees.toFixed(0) + '°';
         controller.applySpanMorph(startPercent, thicknessFactor, 40, shiftAmount, dihedralAngle);
         rightController.applySpanMorph(startPercent, thicknessFactor, 40, shiftAmount, dihedralAngle);
+        try {
+            const ps = new URLSearchParams(window.location.search);
+            ps.set('dihedral', String(degrees));
+            ps.set('mode', 'cinematic');
+            history.replaceState(null, '', '?' + ps.toString());
+        } catch (e) { }
     });
 
     // --- HUD Overlay ---

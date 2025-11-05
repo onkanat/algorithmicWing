@@ -44,23 +44,60 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
     // remove them here; a toggle in the cinematic UI will perform removal.
     let _removedGlobalObjects = [];
     function removeGlobalAxesFromScene() {
+        // More robust removal: look at top-level children and remove any child
+        // group whose name or descendants indicate UI axes/labels/picks. This
+        // avoids accidentally removing unrelated meshes that happened to have
+        // similarly named descendants deep in the graph.
         _removedGlobalObjects = [];
-        scene.traverse((obj) => {
-            if (!obj || obj === scene) return;
-            const isGlobalAxis = obj.isAxesHelper || (obj.name && (obj.name.startsWith('label-') || obj.name.startsWith('axis-') || obj.name.startsWith('pick-')));
-            if (isGlobalAxis) {
-                if (obj.parent) {
-                    obj.parent.remove(obj);
-                    _removedGlobalObjects.push(obj);
+        // iterate over a shallow copy because we'll be mutating scene.children
+        const topChildren = scene.children.slice();
+        for (const child of topChildren) {
+            if (!child) continue;
+            const name = child.name || '';
+            let shouldRemove = false;
+
+            // remove any explicit AxesHelper or groups named like '*wing-axes' or containing 'center-'
+            if (child.isAxesHelper) shouldRemove = true;
+            if (name.includes('wing-axes') || name.includes('center-') || name.includes('axes') ) shouldRemove = true;
+
+            // if any descendant has a label/axis/pick style name, treat the whole top-level child as removable
+            child.traverse((c) => {
+                if (!c || shouldRemove) return;
+                const cn = c.name || '';
+                if (cn.includes('label-') || cn.includes('-label-') || cn.includes('axis-') || cn.includes('pick-')) {
+                    shouldRemove = true;
+                }
+                // ArrowHelper is used for visual arrows; if present, remove the parent group
+                if (c.type === 'ArrowHelper') shouldRemove = true;
+            });
+
+            if (shouldRemove) {
+                try {
+                    scene.remove(child);
+                    _removedGlobalObjects.push(child);
+                } catch (e) {
+                    // best-effort: ignore removal errors
                 }
             }
-        });
+        }
+
+        // Also ensure the programmatically created centerAxesObj (if any) is removed
+        try {
+            if (centerAxesObj && centerAxesObj.obj && centerAxesObj.obj.parent) {
+                centerAxesObj.obj.parent.remove(centerAxesObj.obj);
+                _removedGlobalObjects.push(centerAxesObj.obj);
+            }
+        } catch (e) { }
     }
 
     function restoreGlobalAxesToScene() {
         if (!_removedGlobalObjects || _removedGlobalObjects.length === 0) return;
         for (const o of _removedGlobalObjects) {
-            scene.add(o);
+            try {
+                scene.add(o);
+            } catch (e) {
+                // ignore restore failures
+            }
         }
         _removedGlobalObjects = [];
     }

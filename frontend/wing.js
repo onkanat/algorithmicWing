@@ -75,7 +75,7 @@ document.body.style.margin = '0';
 // professional and focused on the center. Cinematic mode leaves background
 // to the HDR environment.
 if (startMode === 'normal') {
-    document.body.style.background = 'radial-gradient(circle at center, #2b3640 0%, #14181c 45%, #07080a 100%)';
+    document.body.style.background = 'radial-gradient(circle at center, #1b8e92d7 0%, #246cb4ff 45%, #a2a5acff 100%)';
     document.body.style.backgroundAttachment = 'fixed';
     document.body.style.backgroundRepeat = 'no-repeat';
     document.body.style.backgroundSize = 'cover';
@@ -272,19 +272,84 @@ scene.add(axes);
     const labelZ = makeLabel('Z', '#4444ff');
     labelZ.position.set(0, 0, axisLen * 1.08);
 
+    // name and attach axis direction metadata so we can interact with them
+    arrowX.name = 'axis-X';
+    arrowY.name = 'axis-Y';
+    arrowZ.name = 'axis-Z';
+    arrowX.userData = { axis: new THREE.Vector3(1, 0, 0) };
+    arrowY.userData = { axis: new THREE.Vector3(0, 1, 0) };
+    arrowZ.userData = { axis: new THREE.Vector3(0, 0, 1) };
+
+    labelX.name = 'label-X';
+    labelY.name = 'label-Y';
+    labelZ.name = 'label-Z';
+    labelX.userData = { axis: new THREE.Vector3(1, 0, 0) };
+    labelY.userData = { axis: new THREE.Vector3(0, 1, 0) };
+    labelZ.userData = { axis: new THREE.Vector3(0, 0, 1) };
+
     scene.add(labelX, labelY, labelZ);
 })();
+
+// double-click on an axis label or arrow to snap the camera to look perpendicular
+// to the wing from that axis. This provides a quick orthographic-like view.
+const _axisRaycaster = new THREE.Raycaster();
+const _axisMouse = new THREE.Vector2();
+function onAxisDoubleClick(evt) {
+    const rect = renderer.domElement.getBoundingClientRect();
+    _axisMouse.x = ((evt.clientX - rect.left) / rect.width) * 2 - 1;
+    _axisMouse.y = -((evt.clientY - rect.top) / rect.height) * 2 + 1;
+    _axisRaycaster.setFromCamera(_axisMouse, camera);
+
+    const candidates = ['label-X', 'label-Y', 'label-Z', 'axis-X', 'axis-Y', 'axis-Z']
+        .map((n) => scene.getObjectByName(n))
+        .filter(Boolean);
+
+    const intersects = _axisRaycaster.intersectObjects(candidates, true);
+    if (!intersects || intersects.length === 0) return;
+    const hit = intersects[0].object;
+    const axisDir = (hit.userData && hit.userData.axis) ? hit.userData.axis.clone() : null;
+    if (!axisDir) return;
+
+    // compute target (center of the wing)
+    const target = new THREE.Vector3(0, 0, 0);
+    const currDist = camera.position.distanceTo(target) || 20;
+    // place camera along axis direction at current distance
+    const endPos = axisDir.clone().multiplyScalar(currDist);
+
+    // animate camera position and controls.target smoothly
+    const startPos = camera.position.clone();
+    const startTarget = controls.target.clone();
+    const duration = 400; // ms
+    const startTime = performance.now();
+    function tick(now) {
+        const t = Math.min(1, (now - startTime) / duration);
+        camera.position.lerpVectors(startPos, endPos, t);
+        controls.target.lerpVectors(startTarget, target, t);
+        controls.update();
+        if (t < 1) requestAnimationFrame(tick);
+        else {
+            camera.lookAt(target);
+            controls.target.copy(target);
+            controls.update();
+        }
+    }
+    requestAnimationFrame(tick);
+}
+
+renderer.domElement.addEventListener('dblclick', onAxisDoubleClick);
 
 // subtle grid overlay for Normal mode only (keeps cinematic clean)
 let _normalGrid = null;
 if (startMode === 'normal') {
     const gridSize = 6 * params.scale;
-    const gridDivs = 40;
+    // increase grid density by ~35% as requested (was 40)
+    const gridDivs = Math.round(40 * 1.35);
     _normalGrid = new THREE.GridHelper(gridSize, gridDivs, 0x2b3036, 0x191b1d);
     _normalGrid.rotation.x = Math.PI / 2;
     // make the grid faint and non-obtrusive
     if (_normalGrid.material) {
-        _normalGrid.material.opacity = 0.06;
+        // increase opacity by ~35% from previous 0.06
+        _normalGrid.material.opacity = 0.06 * 1.35;
         _normalGrid.material.transparent = true;
         // render the grid behind the foil by ensuring it's drawn first
         _normalGrid.renderOrder = 0;

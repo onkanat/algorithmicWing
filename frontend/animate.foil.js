@@ -8,7 +8,8 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
     controls.enabled = false;
 
     // read initial parameters from URL so cinematic mode mirrors normal mode state
-    let initParams = { naca: '4430', chord: 1.0, points: 200, depth: 3, scale: 3.0 };
+    // Use the project's standard default NACA code (keep consistent with normal mode)
+    let initParams = { naca: '2412', chord: 1.0, points: 200, depth: 3, scale: 3.0 };
     try {
         const p = new URLSearchParams(window.location.search);
         const n = p.get('naca'); if (n) initParams.naca = String(n).replace(/\D/g, '');
@@ -54,7 +55,7 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
     let thicknessFactor = (typeof initSpan.thicknessFactor === 'number') ? initSpan.thicknessFactor : 1.0;
     let shiftAmount = (typeof initSpan.shiftAmount === 'number') ? initSpan.shiftAmount : 0.0;
     let dihedralAngle = (typeof initSpan.dihedralAngle === 'number') ? initSpan.dihedralAngle : 0.0;
-    let nacaCode = initParams.naca || '4430';
+    let nacaCode = initParams.naca || '2412';
 
     let frameCounter = 0;
 

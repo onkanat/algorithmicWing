@@ -81,8 +81,8 @@ export function animateFoil(scene, foil, renderer, camera, duration = 10, fps = 
     }
 
     // --- Controllers for both wings ---
-    const leftController = addSpanMorphUI({ naca: '4430', chord: 1.5, points: 300, depth: 3, scale: 3.0 }, foil, naca4Coordinates);
-    const rightController = addSpanMorphUI({ naca: '4430', chord: 1.5, points: 300, depth: 3, scale: 3.0 }, rightWing, naca4Coordinates);
+    const leftController = addSpanMorphUI({ naca: '2412', chord: 1.5, points: 300, depth: 3, scale: 3.0 }, foil, naca4Coordinates);
+    const rightController = addSpanMorphUI({ naca: '2412', chord: 1.5, points: 300, depth: 3, scale: 3.0 }, rightWing, naca4Coordinates);
 
     // --- Shared animation parameters for symmetry ---
     const animationParams = {
@@ -90,9 +90,9 @@ export function animateFoil(scene, foil, renderer, camera, duration = 10, fps = 
         thicknessFactor: 1.0,
         shiftAmount: 0.0,
         dihedralAngle: 0.0,
-        currentNacaNums: parseNaca('4430'),
-        targetNacaNums: parseNaca('4430'),
-        lastAppliedNaca: '4430',
+    currentNacaNums: parseNaca('2412'),
+    targetNacaNums: parseNaca('2412'),
+    lastAppliedNaca: '2412',
     };
 
     // --- MediaRecorder setup ---

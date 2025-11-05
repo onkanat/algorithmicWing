@@ -99,12 +99,33 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
         return { group: g, labels: [labelX, labelY, labelZ] };
     }
 
-    // create axes for left and right wings and attach to their groups
-    const leftAxes = makeWingAxes(initParams.scale, 'left-');
-    foil.add(leftAxes.group);
+    // create a single axes group positioned at the midpoint between the two wings
+    const centerAxesObj = (function createCenterAxes() {
+        const axes = makeWingAxes(initParams.scale, 'center-');
+        scene.add(axes.group);
 
-    const rightAxes = makeWingAxes(initParams.scale, 'right-');
-    rightWing.add(rightAxes.group);
+        function updatePosition() {
+            try {
+                // compute bounding box centers for both wing groups (accounts for morphs)
+                const b1 = new THREE.Box3().setFromObject(foil);
+                const b2 = new THREE.Box3().setFromObject(rightWing);
+                const c1 = new THREE.Vector3();
+                const c2 = new THREE.Vector3();
+                b1.getCenter(c1);
+                b2.getCenter(c2);
+                const mid = c1.add(c2).multiplyScalar(0.5);
+                axes.group.position.copy(mid);
+            } catch (e) {
+                // fallback: place at origin
+                axes.group.position.set(0, 0, 0);
+            }
+        }
+
+        // initial position
+        updatePosition();
+
+        return { obj: axes.group, labels: axes.labels, updatePosition };
+    })();
 
     // Create a second controller for the right wing so it can be morphed independently
     let rightController = addSpanMorphUI(initParams, rightWing, naca4Coordinates, Object.assign({ appendPanel: false }, initSpan));
@@ -509,12 +530,13 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
         // ensure wing axes labels face the camera for readability
         try {
             const allLabels = [];
-            if (leftAxes && leftAxes.labels) allLabels.push(...leftAxes.labels);
-            if (rightAxes && rightAxes.labels) allLabels.push(...rightAxes.labels);
+            if (centerAxesObj && centerAxesObj.labels) allLabels.push(...centerAxesObj.labels);
             for (const lbl of allLabels) {
                 // copy camera quaternion so sprite faces camera
                 lbl.quaternion.copy(camera.quaternion);
             }
+            // update center axes position in case morph changed wing geometry
+            if (centerAxesObj && typeof centerAxesObj.updatePosition === 'function') centerAxesObj.updatePosition();
         } catch (e) {
             // ignore label update errors
         }

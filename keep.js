@@ -90,9 +90,9 @@ export function animateFoil(scene, foil, renderer, camera, duration = 10, fps = 
         thicknessFactor: 1.0,
         shiftAmount: 0.0,
         dihedralAngle: 0.0,
-    currentNacaNums: parseNaca('2412'),
-    targetNacaNums: parseNaca('2412'),
-    lastAppliedNaca: '2412',
+        currentNacaNums: parseNaca('2412'),
+        targetNacaNums: parseNaca('2412'),
+        lastAppliedNaca: '2412',
     };
 
     // --- MediaRecorder setup ---

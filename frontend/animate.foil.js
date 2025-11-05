@@ -39,14 +39,31 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
     rightWing.position.z = -foil.position.z - 10; // offset to the other side
     scene.add(rightWing);
 
-    // In cinematic mode, hide any global axes/labels created by normal mode
-    // and create per-wing axes centered on each wing to keep symmetry.
-    scene.traverse((obj) => {
-        if (obj && obj.isAxesHelper) obj.visible = false;
-        if (obj && (obj.name === 'label-X' || obj.name === 'label-Y' || obj.name === 'label-Z')) obj.visible = false;
-        if (obj && (obj.name === 'axis-X' || obj.name === 'axis-Y' || obj.name === 'axis-Z')) obj.visible = false;
-        if (obj && (obj.name === 'pick-X' || obj.name === 'pick-Y' || obj.name === 'pick-Z')) obj.visible = false;
-    });
+    // In cinematic mode, we allow removing global axes/labels/picks completely
+    // (instead of only hiding) via a toggle. By default we will not permanently
+    // remove them here; a toggle in the cinematic UI will perform removal.
+    let _removedGlobalObjects = [];
+    function removeGlobalAxesFromScene() {
+        _removedGlobalObjects = [];
+        scene.traverse((obj) => {
+            if (!obj || obj === scene) return;
+            const isGlobalAxis = obj.isAxesHelper || (obj.name && (obj.name.startsWith('label-') || obj.name.startsWith('axis-') || obj.name.startsWith('pick-')));
+            if (isGlobalAxis) {
+                if (obj.parent) {
+                    obj.parent.remove(obj);
+                    _removedGlobalObjects.push(obj);
+                }
+            }
+        });
+    }
+
+    function restoreGlobalAxesToScene() {
+        if (!_removedGlobalObjects || _removedGlobalObjects.length === 0) return;
+        for (const o of _removedGlobalObjects) {
+            scene.add(o);
+        }
+        _removedGlobalObjects = [];
+    }
 
     // helper to create labeled axes group for a wing
     function makeWingAxes(scale, namePrefix = '') {
@@ -106,15 +123,52 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
 
         function updatePosition() {
             try {
-                // compute bounding box centers for both wing groups (accounts for morphs)
-                const b1 = new THREE.Box3().setFromObject(foil);
-                const b2 = new THREE.Box3().setFromObject(rightWing);
-                const c1 = new THREE.Vector3();
-                const c2 = new THREE.Vector3();
-                b1.getCenter(c1);
-                b2.getCenter(c2);
-                const mid = c1.add(c2).multiplyScalar(0.5);
-                axes.group.position.copy(mid);
+                    // Compute accurate geometry centroid (vertex-average) for each wing.
+                    // This is more robust than bounding-box center when morphing.
+                    function computeGeometryCentroid(obj) {
+                        const v = new THREE.Vector3();
+                        const tmp = new THREE.Vector3();
+                        let count = 0;
+                        obj.traverse((child) => {
+                            if (child.isMesh && child.geometry) {
+                                const geom = child.geometry;
+                                const posAttr = geom.attributes && geom.attributes.position;
+                                if (!posAttr) return;
+                                for (let i = 0; i < posAttr.count; i++) {
+                                    v.fromBufferAttribute(posAttr, i);
+                                    // transform to world space
+                                    tmp.copy(v).applyMatrix4(child.matrixWorld);
+                                    v.add(tmp);
+                                    count++;
+                                }
+                            }
+                        });
+                        if (count === 0) return null;
+                        // v currently holds sum of all positions twice (we added tmp to v each loop),
+                        // so divide by (count * 2). Simpler approach: recompute properly below.
+                        // Recompute properly: accumulate in sum vector
+                        const sum = new THREE.Vector3();
+                        let n = 0;
+                        obj.traverse((child) => {
+                            if (child.isMesh && child.geometry) {
+                                const geom = child.geometry;
+                                const posAttr = geom.attributes && geom.attributes.position;
+                                if (!posAttr) return;
+                                for (let i = 0; i < posAttr.count; i++) {
+                                    tmp.fromBufferAttribute(posAttr, i).applyMatrix4(child.matrixWorld);
+                                    sum.add(tmp);
+                                    n++;
+                                }
+                            }
+                        });
+                        if (n === 0) return null;
+                        return sum.multiplyScalar(1 / n);
+                    }
+
+                    const c1 = computeGeometryCentroid(foil) || new THREE.Vector3();
+                    const c2 = computeGeometryCentroid(rightWing) || new THREE.Vector3();
+                    const mid = c1.add(c2).multiplyScalar(0.5);
+                    axes.group.position.copy(mid);
             } catch (e) {
                 // fallback: place at origin
                 axes.group.position.set(0, 0, 0);
@@ -345,6 +399,42 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
 
     document.body.appendChild(controlPanel);
 
+    // toggle to remove/restore global axes/labels/picks from the scene
+    let removeAxesState = false;
+    const axesToggleContainer = document.createElement('div');
+    axesToggleContainer.style.marginBottom = '12px';
+    const axesToggleLabel = document.createElement('label');
+    axesToggleLabel.style.color = '#00ff00';
+    axesToggleLabel.style.cursor = 'pointer';
+    axesToggleLabel.innerText = ' Remove global axes (scene)';
+    const axesCheckbox = document.createElement('input');
+    axesCheckbox.type = 'checkbox';
+    axesCheckbox.style.marginRight = '8px';
+    axesToggleContainer.appendChild(axesCheckbox);
+    axesToggleContainer.appendChild(axesToggleLabel);
+    controlPanel.appendChild(axesToggleContainer);
+
+    axesCheckbox.addEventListener('change', (e) => {
+        removeAxesState = Boolean(e.target.checked);
+        if (removeAxesState) {
+            removeGlobalAxesFromScene();
+        } else {
+            restoreGlobalAxesToScene();
+        }
+    });
+
+    // keyboard shortcut 'a' to toggle remove/restore of global axes
+    document.addEventListener('keydown', (ev) => {
+        // don't interfere with typing in the panel
+        const active = document.activeElement;
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+        if (ev.key === 'a' || ev.key === 'A') {
+            removeAxesState = !removeAxesState;
+            axesCheckbox.checked = removeAxesState;
+            if (removeAxesState) removeGlobalAxesFromScene(); else restoreGlobalAxesToScene();
+        }
+    });
+
     // NACA değişimi için rebuild fonksiyonu
 
     function rebuildWithNewNACA(newNaca) {
@@ -508,6 +598,9 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
         </div>
         <div style="font-size:11px;opacity:0.8;margin-bottom:8px;">
             🎬 Roll: ${rollAngle}° | ⏱️ ${(frameCounter / fps).toFixed(1)}s
+        </div>
+        <div style="font-size:12px;opacity:0.9;margin-top:6px;">
+            🧭 Global axes removed: <strong style="color:${removeAxesState ? '#ff4444' : '#44ff44'}">${removeAxesState ? 'YES' : 'NO'}</strong>
         </div>
         <div style="margin-top:8px;background:rgba(0,255,0,0.1);border-radius:4px;overflow:hidden;">
             <div style="width:${progressPercent}%;height:4px;background:${hudColor};transition:width 0.1s;box-shadow:0 0 10px ${hudColor};"></div>

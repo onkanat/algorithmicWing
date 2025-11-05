@@ -1,11 +1,21 @@
 import * as THREE from 'three';
+import { naca4Coordinates, naca5Coordinates } from './nacaprofile.js';
 
-export function addSpanMorphUI(params, foil, naca4Coordinates) {
+export function addSpanMorphUI(params, foil, coordsFunc = null, options = {}) {
     let currentFoil = foil;
+    const { appendPanel = true } = options;
+    // Optional initial span morph values (start percent 0-1, factor, slices, shift, dihedral radians)
+    const initStart = (typeof options.startPercent === 'number') ? options.startPercent : 0.5;
+    const initFactor = (typeof options.thicknessFactor === 'number') ? options.thicknessFactor : 1.0;
+    const initSlices = (typeof options.slices === 'number') ? options.slices : 40;
+    const initShift = (typeof options.shiftAmount === 'number') ? options.shiftAmount : 0;
+    const initDihedral = (typeof options.dihedralAngle === 'number') ? options.dihedralAngle : 0;
 
     // --- Span Morph Geometry ---
     function createSpanMorphGeometry(startPercent = 0.5, thicknessFactor = 1.0, slices = 40, shiftAmount = 0, dihedralAngle = 0) {
-        let shape2D = naca4Coordinates(params.naca, params.chord, params.points);
+        // choose generator based on current params.naca length; prefer 5-digit if available
+        const use5 = String(params.naca).replace(/\D/g, '').length === 5;
+        let shape2D = use5 ? naca5Coordinates(params.naca, params.chord, params.points) : naca4Coordinates(params.naca, params.chord, params.points);
 
         if (shape2D.length > 1) {
             const first = shape2D[0];
@@ -145,25 +155,22 @@ export function addSpanMorphUI(params, foil, naca4Coordinates) {
     }
 
     const startInput = document.createElement('input');
-    startInput.type = 'number'; startInput.min = 0; startInput.max = 100; startInput.step = 1; startInput.value = 50; startInput.style.width = '100%';
+    startInput.type = 'number'; startInput.min = 0; startInput.max = 100; startInput.step = 1; startInput.value = Math.round(initStart * 100); startInput.style.width = '100%';
 
     const factorInput = document.createElement('input');
-    factorInput.type = 'number'; factorInput.min = 0.1; factorInput.max = 3; factorInput.step = 0.01; factorInput.value = 1.0; factorInput.style.width = '100%';
+    factorInput.type = 'number'; factorInput.min = 0.1; factorInput.max = 3; factorInput.step = 0.01; factorInput.value = initFactor; factorInput.style.width = '100%';
 
     const slicesInput = document.createElement('input');
-    slicesInput.type = 'number'; slicesInput.min = 2; slicesInput.max = 200; slicesInput.step = 1; slicesInput.value = 40; slicesInput.style.width = '100%';
+    slicesInput.type = 'number'; slicesInput.min = 2; slicesInput.max = 200; slicesInput.step = 1; slicesInput.value = initSlices; slicesInput.style.width = '100%';
 
     const shiftInput = document.createElement('input');
-    shiftInput.type = 'number'; shiftInput.min = -5; shiftInput.max = 5; shiftInput.step = 0.01; shiftInput.value = 0.0; shiftInput.style.width = '100%';
+    shiftInput.type = 'number'; shiftInput.min = -5; shiftInput.max = 5; shiftInput.step = 0.01; shiftInput.value = initShift; shiftInput.style.width = '100%';
 
     const dihedralInput = document.createElement('input');
-    dihedralInput.type = 'number'; dihedralInput.min = -45; dihedralInput.max = 45; dihedralInput.step = 0.1; dihedralInput.value = 0; dihedralInput.style.width = '100%';
+    dihedralInput.type = 'number'; dihedralInput.min = -45; dihedralInput.max = 45; dihedralInput.step = 0.1; dihedralInput.value = initDihedral * 180 / Math.PI; dihedralInput.style.width = '100%';
 
     const applyBtn = document.createElement('button');
     applyBtn.textContent = 'Span Morph Uygula'; applyBtn.style.width = '100%'; applyBtn.style.padding = '6px'; applyBtn.style.cursor = 'pointer';
-
-    const resetBtn = document.createElement('button');
-    resetBtn.textContent = 'Sıfırla (varsayılan)'; resetBtn.style.width = '100%'; resetBtn.style.padding = '6px'; resetBtn.style.marginTop = '6px'; resetBtn.style.cursor = 'pointer';
 
     panel.appendChild(row('Başlangıç (%) (0=root,100=tip)', startInput));
     panel.appendChild(row('Kalınlık Faktörü (1 = orijinal)', factorInput));
@@ -171,9 +178,10 @@ export function addSpanMorphUI(params, foil, naca4Coordinates) {
     panel.appendChild(row('Kaydırma (X, chord birimlerinde)', shiftInput));
     panel.appendChild(row('Dihedral Açısı (°)', dihedralInput));
     panel.appendChild(applyBtn);
-    panel.appendChild(resetBtn);
 
-    // document.body.appendChild(panel);
+    if (appendPanel) {
+        document.body.appendChild(panel);
+    }
 
     applyBtn.addEventListener('click', () => {
         const start = Math.max(0, Math.min(100, parseFloat(startInput.value) || 50)) / 100;
@@ -184,10 +192,24 @@ export function addSpanMorphUI(params, foil, naca4Coordinates) {
         applySpanMorph(start, factor, slices, shift, dihedral);
     });
 
-    resetBtn.addEventListener('click', () => {
-        startInput.value = 50; factorInput.value = 1.0; slicesInput.value = 40; shiftInput.value = 0.0; dihedralInput.value = 0;
+    function resetDefaults() {
+        startInput.value = Math.round(0.5 * 100);
+        factorInput.value = 1.0;
+        slicesInput.value = 40;
+        shiftInput.value = 0.0;
+        dihedralInput.value = 0;
         applyBtn.click();
-    });
+    }
+
+    function getCurrentValues() {
+        return {
+            startPercent: Math.max(0, Math.min(100, parseFloat(startInput.value) || 50)) / 100,
+            thicknessFactor: Math.max(0.01, parseFloat(factorInput.value) || 1.0),
+            slices: Math.max(2, parseInt(slicesInput.value, 10) || 40),
+            shiftAmount: parseFloat(shiftInput.value) || 0,
+            dihedralAngle: (parseFloat(dihedralInput.value) || 0) * Math.PI / 180
+        };
+    }
 
     let debounce = null;
     [startInput, factorInput, slicesInput, shiftInput, dihedralInput].forEach(inp => {
@@ -199,5 +221,5 @@ export function addSpanMorphUI(params, foil, naca4Coordinates) {
 
     applyBtn.click();
 
-    return { applySpanMorph, setFoilMesh };
+    return { applySpanMorph, setFoilMesh, resetDefaults, getCurrentValues };
 }

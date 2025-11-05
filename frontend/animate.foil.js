@@ -39,6 +39,73 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
     rightWing.position.z = -foil.position.z - 10; // offset to the other side
     scene.add(rightWing);
 
+    // In cinematic mode, hide any global axes/labels created by normal mode
+    // and create per-wing axes centered on each wing to keep symmetry.
+    scene.traverse((obj) => {
+        if (obj && obj.isAxesHelper) obj.visible = false;
+        if (obj && (obj.name === 'label-X' || obj.name === 'label-Y' || obj.name === 'label-Z')) obj.visible = false;
+        if (obj && (obj.name === 'axis-X' || obj.name === 'axis-Y' || obj.name === 'axis-Z')) obj.visible = false;
+        if (obj && (obj.name === 'pick-X' || obj.name === 'pick-Y' || obj.name === 'pick-Z')) obj.visible = false;
+    });
+
+    // helper to create labeled axes group for a wing
+    function makeWingAxes(scale, namePrefix = '') {
+        const g = new THREE.Group();
+        g.name = namePrefix + 'wing-axes';
+        const axisLen = 0.5 * scale;
+        const headLength = 0.08 * scale;
+        const headWidth = 0.04 * scale;
+
+        const arrowX = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 0), axisLen, 0xff0000, headLength, headWidth);
+        const arrowY = new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 0), axisLen, 0x00ff00, headLength, headWidth);
+        const arrowZ = new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 0), axisLen, 0x0000ff, headLength, headWidth);
+        g.add(arrowX, arrowY, arrowZ);
+
+        function makeLabel(text, color) {
+            const size = 256;
+            const canvas = document.createElement('canvas');
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, size, size);
+            ctx.font = `${Math.floor(size * 0.12)}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = color;
+            ctx.fillText(text, size / 2, size / 2);
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.needsUpdate = true;
+            const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false, depthWrite: false, sizeAttenuation: false });
+            const sprite = new THREE.Sprite(mat);
+            const s = 0.16 * scale;
+            sprite.scale.set(s, s, 1);
+            return sprite;
+        }
+
+        const labelX = makeLabel('X', '#ff4444');
+        labelX.position.set(axisLen * 1.08, 0, 0);
+        const labelY = makeLabel('Y', '#44ff44');
+        labelY.position.set(0, axisLen * 1.08, 0);
+        const labelZ = makeLabel('Z', '#4444ff');
+        labelZ.position.set(0, 0, axisLen * 1.08);
+
+        labelX.name = namePrefix + 'label-X';
+        labelY.name = namePrefix + 'label-Y';
+        labelZ.name = namePrefix + 'label-Z';
+
+        g.add(labelX, labelY, labelZ);
+
+        // return group and label sprites so caller can update their orientation
+        return { group: g, labels: [labelX, labelY, labelZ] };
+    }
+
+    // create axes for left and right wings and attach to their groups
+    const leftAxes = makeWingAxes(initParams.scale, 'left-');
+    foil.add(leftAxes.group);
+
+    const rightAxes = makeWingAxes(initParams.scale, 'right-');
+    rightWing.add(rightAxes.group);
+
     // Create a second controller for the right wing so it can be morphed independently
     let rightController = addSpanMorphUI(initParams, rightWing, naca4Coordinates, Object.assign({ appendPanel: false }, initSpan));
 
@@ -438,6 +505,19 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
 
         // Parametreler UI'dan kontrol ediliyor (slider event listeners ile)
         // Her frame'de sadece render yapıyoruz
+
+        // ensure wing axes labels face the camera for readability
+        try {
+            const allLabels = [];
+            if (leftAxes && leftAxes.labels) allLabels.push(...leftAxes.labels);
+            if (rightAxes && rightAxes.labels) allLabels.push(...rightAxes.labels);
+            for (const lbl of allLabels) {
+                // copy camera quaternion so sprite faces camera
+                lbl.quaternion.copy(camera.quaternion);
+            }
+        } catch (e) {
+            // ignore label update errors
+        }
 
         renderer.render(scene, camera);
 

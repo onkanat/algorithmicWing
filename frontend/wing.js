@@ -288,6 +288,41 @@ scene.add(axes);
     labelZ.userData = { axis: new THREE.Vector3(0, 0, 1) };
 
     scene.add(labelX, labelY, labelZ);
+
+    // create small invisible pick meshes near labels to improve double-click
+    // reliability. The materials are nearly transparent but still raycastable.
+    function makePickMesh(size) {
+        const geo = new THREE.PlaneGeometry(size, size);
+        const mat = new THREE.MeshBasicMaterial({ color: 0xff00ff, opacity: 0.001, transparent: true, depthTest: false });
+        const m = new THREE.Mesh(geo, mat);
+        // do not cast/receive shadow; keep render order low
+        m.castShadow = false;
+        m.receiveShadow = false;
+        m.renderOrder = 0;
+        return m;
+    }
+
+    const pickSize = 0.6 * params.scale;
+    const pickX = makePickMesh(pickSize);
+    pickX.name = 'pick-X';
+    pickX.userData = { axis: new THREE.Vector3(1, 0, 0) };
+    pickX.position.copy(labelX.position);
+    pickX.lookAt(camera.position);
+    scene.add(pickX);
+
+    const pickY = makePickMesh(pickSize);
+    pickY.name = 'pick-Y';
+    pickY.userData = { axis: new THREE.Vector3(0, 1, 0) };
+    pickY.position.copy(labelY.position);
+    pickY.lookAt(camera.position);
+    scene.add(pickY);
+
+    const pickZ = makePickMesh(pickSize);
+    pickZ.name = 'pick-Z';
+    pickZ.userData = { axis: new THREE.Vector3(0, 0, 1) };
+    pickZ.position.copy(labelZ.position);
+    pickZ.lookAt(camera.position);
+    scene.add(pickZ);
 })();
 
 // double-click on an axis label or arrow to snap the camera to look perpendicular
@@ -315,7 +350,8 @@ function onAxisDoubleClick(evt) {
         const rect = renderer.domElement.getBoundingClientRect();
         const px = evt.clientX;
         const py = evt.clientY;
-        const pickThreshold = 28; // pixels
+    // enlarge pixel fallback threshold for easier double-click selection
+    const pickThreshold = 44; // pixels
         let best = { dist: Infinity, obj: null };
         for (const obj of candidates) {
             const wp = new THREE.Vector3();

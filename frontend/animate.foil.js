@@ -8,7 +8,8 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
     controls.enabled = false;
 
     // read initial parameters from URL so cinematic mode mirrors normal mode state
-    let initParams = { naca: '4430', chord: 1.0, points: 200, depth: 3, scale: 3.0 };
+    // Use the project's standard default NACA code (keep consistent with normal mode)
+    let initParams = { naca: '2412', chord: 1.0, points: 200, depth: 3, scale: 3.0 };
     try {
         const p = new URLSearchParams(window.location.search);
         const n = p.get('naca'); if (n) initParams.naca = String(n).replace(/\D/g, '');
@@ -38,6 +39,167 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
     rightWing.position.z = -foil.position.z - 10; // offset to the other side
     scene.add(rightWing);
 
+    // In cinematic mode, we allow removing global axes/labels/picks completely
+    // (instead of only hiding) via a toggle. By default we will not permanently
+    // remove them here; a toggle in the cinematic UI will perform removal.
+    let _removedGlobalObjects = [];
+    function removeGlobalAxesFromScene() {
+        // More robust removal: look at top-level children and remove any child
+        // group whose name or descendants indicate UI axes/labels/picks. This
+        // avoids accidentally removing unrelated meshes that happened to have
+        // similarly named descendants deep in the graph.
+        _removedGlobalObjects = [];
+        // iterate over a shallow copy because we'll be mutating scene.children
+        const topChildren = scene.children.slice();
+        for (const child of topChildren) {
+            if (!child) continue;
+            const name = child.name || '';
+            let shouldRemove = false;
+
+            // remove any explicit AxesHelper or groups named like '*wing-axes' or containing 'center-'
+            if (child.isAxesHelper) shouldRemove = true;
+            if (name.includes('wing-axes') || name.includes('center-') || name.includes('axes') ) shouldRemove = true;
+
+            // if any descendant has a label/axis/pick style name, treat the whole top-level child as removable
+            child.traverse((c) => {
+                if (!c || shouldRemove) return;
+                const cn = c.name || '';
+                if (cn.includes('label-') || cn.includes('-label-') || cn.includes('axis-') || cn.includes('pick-')) {
+                    shouldRemove = true;
+                }
+                // ArrowHelper is used for visual arrows; if present, remove the parent group
+                if (c.type === 'ArrowHelper') shouldRemove = true;
+            });
+
+            if (shouldRemove) {
+                try {
+                    scene.remove(child);
+                    _removedGlobalObjects.push(child);
+                } catch (e) {
+                    // best-effort: ignore removal errors
+                }
+            }
+        }
+
+        // Also ensure the programmatically created centerAxesObj (if any) is removed
+        try {
+            if (centerAxesObj && centerAxesObj.obj && centerAxesObj.obj.parent) {
+                centerAxesObj.obj.parent.remove(centerAxesObj.obj);
+                _removedGlobalObjects.push(centerAxesObj.obj);
+            }
+        } catch (e) { }
+    }
+
+    function restoreGlobalAxesToScene() {
+        if (!_removedGlobalObjects || _removedGlobalObjects.length === 0) return;
+        for (const o of _removedGlobalObjects) {
+            try {
+                scene.add(o);
+            } catch (e) {
+                // ignore restore failures
+            }
+        }
+        _removedGlobalObjects = [];
+    }
+
+    // helper to create labeled axes group for a wing
+    function makeWingAxes(scale, namePrefix = '') {
+        const g = new THREE.Group();
+        g.name = namePrefix + 'wing-axes';
+        const axisLen = 0.5 * scale;
+        const headLength = 0.08 * scale;
+        const headWidth = 0.04 * scale;
+
+        const arrowX = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 0), axisLen, 0xff0000, headLength, headWidth);
+        const arrowY = new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 0), axisLen, 0x00ff00, headLength, headWidth);
+        const arrowZ = new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 0), axisLen, 0x0000ff, headLength, headWidth);
+        g.add(arrowX, arrowY, arrowZ);
+
+        function makeLabel(text, color) {
+            const size = 256;
+            const canvas = document.createElement('canvas');
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, size, size);
+            ctx.font = `${Math.floor(size * 0.12)}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = color;
+            ctx.fillText(text, size / 2, size / 2);
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.needsUpdate = true;
+            const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false, depthWrite: false, sizeAttenuation: false });
+            const sprite = new THREE.Sprite(mat);
+            const s = 0.16 * scale;
+            sprite.scale.set(s, s, 1);
+            return sprite;
+        }
+
+        const labelX = makeLabel('X', '#ff4444');
+        labelX.position.set(axisLen * 1.08, 0, 0);
+        const labelY = makeLabel('Y', '#44ff44');
+        labelY.position.set(0, axisLen * 1.08, 0);
+        const labelZ = makeLabel('Z', '#4444ff');
+        labelZ.position.set(0, 0, axisLen * 1.08);
+
+        labelX.name = namePrefix + 'label-X';
+        labelY.name = namePrefix + 'label-Y';
+        labelZ.name = namePrefix + 'label-Z';
+
+        g.add(labelX, labelY, labelZ);
+
+        // return group and label sprites so caller can update their orientation
+        return { group: g, labels: [labelX, labelY, labelZ] };
+    }
+
+    // create a single axes group positioned at the midpoint between the two wings
+    const centerAxesObj = (function createCenterAxes() {
+        const axes = makeWingAxes(initParams.scale, 'center-');
+        scene.add(axes.group);
+
+        function updatePosition() {
+            try {
+                    // Compute accurate geometry centroid (vertex-average) for each wing.
+                    // This is more robust than bounding-box center when morphing.
+                    /**
+                     * Compute the geometry centroid (vertex-average) of an object
+                     * in world coordinates. Returns null if no vertices found.
+                     */
+                    function computeGeometryCentroid(obj) {
+                        const tmp = new THREE.Vector3();
+                        const sum = new THREE.Vector3();
+                        let n = 0;
+                        obj.traverse((child) => {
+                            if (child.isMesh && child.geometry) {
+                                const posAttr = child.geometry.attributes && child.geometry.attributes.position;
+                                if (!posAttr) return;
+                                for (let i = 0; i < posAttr.count; i++) {
+                                    tmp.fromBufferAttribute(posAttr, i).applyMatrix4(child.matrixWorld);
+                                    sum.add(tmp);
+                                    n++;
+                                }
+                            }
+                        });
+                        return n === 0 ? null : sum.multiplyScalar(1 / n);
+                    }
+
+                    const c1 = computeGeometryCentroid(foil) || new THREE.Vector3();
+                    const c2 = computeGeometryCentroid(rightWing) || new THREE.Vector3();
+                    const mid = c1.add(c2).multiplyScalar(0.5);
+                    axes.group.position.copy(mid);
+            } catch (e) {
+                // fallback: place at origin
+                axes.group.position.set(0, 0, 0);
+            }
+        }
+
+        // initial position
+        updatePosition();
+
+        return { obj: axes.group, labels: axes.labels, updatePosition };
+    })();
+
     // Create a second controller for the right wing so it can be morphed independently
     let rightController = addSpanMorphUI(initParams, rightWing, naca4Coordinates, Object.assign({ appendPanel: false }, initSpan));
 
@@ -54,7 +216,7 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
     let thicknessFactor = (typeof initSpan.thicknessFactor === 'number') ? initSpan.thicknessFactor : 1.0;
     let shiftAmount = (typeof initSpan.shiftAmount === 'number') ? initSpan.shiftAmount : 0.0;
     let dihedralAngle = (typeof initSpan.dihedralAngle === 'number') ? initSpan.dihedralAngle : 0.0;
-    let nacaCode = initParams.naca || '4430';
+    let nacaCode = initParams.naca || '2412';
 
     let frameCounter = 0;
 
@@ -62,18 +224,11 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
     const totalFrames = duration * fps;
     const cameraTarget = new THREE.Vector3(0, 0, 0); // Wing merkezine bak
 
-    // Initial camera settings (save original position)
-    const initialCameraPos = camera.position.clone();
-    const initialFOV = camera.fov; // Save original FOV
+    // Initial camera settings
+    const initialFOV = camera.fov;
 
     function updateCinematicCamera(progress) {
-        // ✨ CHARMING EFFECT: Ease-in/ease-out (smooth başlangıç ve bitiş)
-        // https://easings.net/#easeInOutCubic
-        const eased = progress < 0.5
-            ? 4 * progress * progress * progress
-            : 1 - Math.pow(-2 * progress + 2, 3) / 2;
-
-        // Ana animasyon hala linear progress kullanıyor ama bazı efektler eased kullanacak
+        // Smooth easing curve available for future use
 
         // 30 SANİYELİK YAVAŞ ROTASYON: Daha uzun, daha gelişmiş hareket
         const fastAngle = progress * Math.PI * 2.5;  // 1.25 tam tur (30 saniyede)
@@ -256,6 +411,42 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
 
     document.body.appendChild(controlPanel);
 
+    // toggle to remove/restore global axes/labels/picks from the scene
+    let removeAxesState = false;
+    const axesToggleContainer = document.createElement('div');
+    axesToggleContainer.style.marginBottom = '12px';
+    const axesToggleLabel = document.createElement('label');
+    axesToggleLabel.style.color = '#00ff00';
+    axesToggleLabel.style.cursor = 'pointer';
+    axesToggleLabel.innerText = ' Remove global axes (scene)';
+    const axesCheckbox = document.createElement('input');
+    axesCheckbox.type = 'checkbox';
+    axesCheckbox.style.marginRight = '8px';
+    axesToggleContainer.appendChild(axesCheckbox);
+    axesToggleContainer.appendChild(axesToggleLabel);
+    controlPanel.appendChild(axesToggleContainer);
+
+    axesCheckbox.addEventListener('change', (e) => {
+        removeAxesState = Boolean(e.target.checked);
+        if (removeAxesState) {
+            removeGlobalAxesFromScene();
+        } else {
+            restoreGlobalAxesToScene();
+        }
+    });
+
+    // keyboard shortcut 'a' to toggle remove/restore of global axes
+    document.addEventListener('keydown', (ev) => {
+        // don't interfere with typing in the panel
+        const active = document.activeElement;
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+        if (ev.key === 'a' || ev.key === 'A') {
+            removeAxesState = !removeAxesState;
+            axesCheckbox.checked = removeAxesState;
+            if (removeAxesState) removeGlobalAxesFromScene(); else restoreGlobalAxesToScene();
+        }
+    });
+
     // NACA değişimi için rebuild fonksiyonu
 
     function rebuildWithNewNACA(newNaca) {
@@ -420,6 +611,9 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
         <div style="font-size:11px;opacity:0.8;margin-bottom:8px;">
             🎬 Roll: ${rollAngle}° | ⏱️ ${(frameCounter / fps).toFixed(1)}s
         </div>
+        <div style="font-size:12px;opacity:0.9;margin-top:6px;">
+            🧭 Global axes removed: <strong style="color:${removeAxesState ? '#ff4444' : '#44ff44'}">${removeAxesState ? 'YES' : 'NO'}</strong>
+        </div>
         <div style="margin-top:8px;background:rgba(0,255,0,0.1);border-radius:4px;overflow:hidden;">
             <div style="width:${progressPercent}%;height:4px;background:${hudColor};transition:width 0.1s;box-shadow:0 0 10px ${hudColor};"></div>
         </div>
@@ -437,6 +631,20 @@ export function animateFoil(scene, foil, renderer, camera, controls, duration = 
 
         // Parametreler UI'dan kontrol ediliyor (slider event listeners ile)
         // Her frame'de sadece render yapıyoruz
+
+        // ensure wing axes labels face the camera for readability
+        try {
+            const allLabels = [];
+            if (centerAxesObj && centerAxesObj.labels) allLabels.push(...centerAxesObj.labels);
+            for (const lbl of allLabels) {
+                // copy camera quaternion so sprite faces camera
+                lbl.quaternion.copy(camera.quaternion);
+            }
+            // update center axes position in case morph changed wing geometry
+            if (centerAxesObj && typeof centerAxesObj.updatePosition === 'function') centerAxesObj.updatePosition();
+        } catch (e) {
+            // ignore label update errors
+        }
 
         renderer.render(scene, camera);
 

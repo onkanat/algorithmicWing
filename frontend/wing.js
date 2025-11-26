@@ -40,6 +40,7 @@ const startMode = (urlParams.get('mode') || 'normal').toLowerCase();
 
 // THREE.js scene
 const scene = new THREE.Scene();
+// default background color (used when no HDR env is applied or when running with alpha)
 scene.background = new THREE.Color(0x203040);
 
 // camera
@@ -52,15 +53,34 @@ const loader = new RGBELoader();
 loader.load('assets/plains_sunset_4k.hdr', (texture) => {
     texture.mapping = THREE.EquirectangularReflectionMapping;
     scene.environment = texture;
-    scene.background = texture;
+    // Only set the scene background to the HDR texture when in cinematic mode
+    // so normal mode's CSS vignette remains visible (renderer uses alpha there).
+    if (startMode === 'cinematic') {
+        scene.background = texture;
+    }
     // … optionally dispose, etc
 });
 
 
 // renderer
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+// Use alpha on the renderer in normal mode so a CSS background (vignette/radial)
+// behind the canvas can be visible. Cinematic mode keeps an opaque canvas so
+// the HDR background/image covers the whole view.
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: startMode === 'normal' });
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.style.margin = '0';
+
+// If we're in normal mode, use a subtle, centered radial vignette as the
+// page background so the canvas (rendered with transparency) appears more
+// professional and focused on the center. Cinematic mode leaves background
+// to the HDR environment.
+if (startMode === 'normal') {
+    document.body.style.background = 'radial-gradient(circle at center, #1b8e92d7 0%, #246cb4ff 45%, #a2a5acff 100%)';
+    document.body.style.backgroundAttachment = 'fixed';
+    document.body.style.backgroundRepeat = 'no-repeat';
+    document.body.style.backgroundSize = 'cover';
+}
+
 document.body.appendChild(renderer.domElement);
 
 // controls
@@ -252,13 +272,177 @@ scene.add(axes);
     const labelZ = makeLabel('Z', '#4444ff');
     labelZ.position.set(0, 0, axisLen * 1.08);
 
+    // name and attach axis direction metadata so we can interact with them
+    arrowX.name = 'axis-X';
+    arrowY.name = 'axis-Y';
+    arrowZ.name = 'axis-Z';
+    arrowX.userData = { axis: new THREE.Vector3(1, 0, 0) };
+    arrowY.userData = { axis: new THREE.Vector3(0, 1, 0) };
+    arrowZ.userData = { axis: new THREE.Vector3(0, 0, 1) };
+
+    labelX.name = 'label-X';
+    labelY.name = 'label-Y';
+    labelZ.name = 'label-Z';
+    labelX.userData = { axis: new THREE.Vector3(1, 0, 0) };
+    labelY.userData = { axis: new THREE.Vector3(0, 1, 0) };
+    labelZ.userData = { axis: new THREE.Vector3(0, 0, 1) };
+
     scene.add(labelX, labelY, labelZ);
+
+    // create small invisible pick meshes near labels to improve double-click
+    // reliability. The materials are nearly transparent but still raycastable.
+    function makePickMesh(size) {
+        const geo = new THREE.PlaneGeometry(size, size);
+        const mat = new THREE.MeshBasicMaterial({ color: 0xff00ff, opacity: 0.001, transparent: true, depthTest: false });
+        const m = new THREE.Mesh(geo, mat);
+        // do not cast/receive shadow; keep render order low
+        m.castShadow = false;
+        m.receiveShadow = false;
+        m.renderOrder = 0;
+        return m;
+    }
+
+    const pickSize = 0.6 * params.scale;
+    const pickX = makePickMesh(pickSize);
+    pickX.name = 'pick-X';
+    pickX.userData = { axis: new THREE.Vector3(1, 0, 0) };
+    pickX.position.copy(labelX.position);
+    pickX.lookAt(camera.position);
+    scene.add(pickX);
+
+    const pickY = makePickMesh(pickSize);
+    pickY.name = 'pick-Y';
+    pickY.userData = { axis: new THREE.Vector3(0, 1, 0) };
+    pickY.position.copy(labelY.position);
+    pickY.lookAt(camera.position);
+    scene.add(pickY);
+
+    const pickZ = makePickMesh(pickSize);
+    pickZ.name = 'pick-Z';
+    pickZ.userData = { axis: new THREE.Vector3(0, 0, 1) };
+    pickZ.position.copy(labelZ.position);
+    pickZ.lookAt(camera.position);
+    scene.add(pickZ);
 })();
 
-// // grid
-// const grid = new THREE.GridHelper(4 * params.scale, 20, 0x222222, 0x111111);
-// grid.rotation.x = Math.PI / 2;
-// scene.add(grid);
+// double-click on an axis label or arrow to snap the camera to look perpendicular
+// to the wing from that axis. This provides a quick orthographic-like view.
+const _axisRaycaster = new THREE.Raycaster();
+const _axisMouse = new THREE.Vector2();
+function onAxisDoubleClick(evt) {
+    const rect = renderer.domElement.getBoundingClientRect();
+    _axisMouse.x = ((evt.clientX - rect.left) / rect.width) * 2 - 1;
+    _axisMouse.y = -((evt.clientY - rect.top) / rect.height) * 2 + 1;
+    _axisRaycaster.setFromCamera(_axisMouse, camera);
+
+    const candidates = ['label-X', 'label-Y', 'label-Z', 'axis-X', 'axis-Y', 'axis-Z']
+        .map((n) => scene.getObjectByName(n))
+        .filter(Boolean);
+
+    const intersects = _axisRaycaster.intersectObjects(candidates, true);
+    let hit = null;
+    if (intersects && intersects.length > 0) {
+        hit = intersects[0].object;
+    } else {
+        // Fallback: if user clicked near the projected axis label/arrow on screen,
+        // accept that as a hit. This improves double-click sensitivity when
+        // the visible label/arrow is small or the raycast misses.
+        const rect = renderer.domElement.getBoundingClientRect();
+        const px = evt.clientX;
+        const py = evt.clientY;
+    // enlarge pixel fallback threshold for easier double-click selection
+    const pickThreshold = 44; // pixels
+        let best = { dist: Infinity, obj: null };
+        for (const obj of candidates) {
+            const wp = new THREE.Vector3();
+            obj.getWorldPosition(wp);
+            const ndc = wp.clone().project(camera);
+            const sx = rect.left + (ndc.x + 1) / 2 * rect.width;
+            const sy = rect.top + (1 - ndc.y) / 2 * rect.height;
+            const dx = sx - px;
+            const dy = sy - py;
+            const d = Math.sqrt(dx * dx + dy * dy);
+            if (d < pickThreshold && d < best.dist) {
+                best = { dist: d, obj };
+            }
+        }
+        if (best.obj) hit = best.obj;
+    }
+    if (!hit) return;
+    const axisDir = (hit.userData && hit.userData.axis) ? hit.userData.axis.clone() : null;
+    if (!axisDir) return;
+
+    // compute target (center of the wing)
+    const target = new THREE.Vector3(0, 0, 0);
+    const currDist = camera.position.distanceTo(target) || 20;
+    // place camera along axis direction at current distance
+    const endPos = axisDir.clone().multiplyScalar(currDist);
+
+    // animate camera position and controls.target smoothly
+    const startPos = camera.position.clone();
+    const startTarget = controls.target.clone();
+    const duration = 400; // ms
+    const startTime = performance.now();
+    function tick(now) {
+        const t = Math.min(1, (now - startTime) / duration);
+        camera.position.lerpVectors(startPos, endPos, t);
+        controls.target.lerpVectors(startTarget, target, t);
+        controls.update();
+        if (t < 1) requestAnimationFrame(tick);
+        else {
+            camera.lookAt(target);
+            controls.target.copy(target);
+            controls.update();
+        }
+    }
+    requestAnimationFrame(tick);
+}
+
+renderer.domElement.addEventListener('dblclick', onAxisDoubleClick);
+
+// subtle grid overlays for Normal mode only (one per principal plane)
+let _grids = [];
+let _gridVisible = true;
+if (startMode === 'normal') {
+    const gridSize = 6 * params.scale;
+    // increase grid density by ~35% as requested (base 40 -> ~54)
+    const gridDivs = Math.round(40 * 1.35);
+    const baseOpacity = 0.06 * 1.35;
+
+    // XZ plane (horizontal)
+    const gridXZ = new THREE.GridHelper(gridSize, gridDivs, 0x2b3036, 0x191b1d);
+    gridXZ.rotation.x = 0;
+
+    // XY plane (front-facing)
+    const gridXY = new THREE.GridHelper(gridSize, gridDivs, 0x2b3036, 0x191b1d);
+    gridXY.rotation.x = Math.PI / 2;
+
+    // YZ plane (side-facing)
+    const gridYZ = new THREE.GridHelper(gridSize, gridDivs, 0x2b3036, 0x191b1d);
+    gridYZ.rotation.z = Math.PI / 2;
+
+    [_grids[0], _grids[1], _grids[2]] = [gridXZ, gridXY, gridYZ];
+
+    for (const g of _grids) {
+        if (g.material) {
+            g.material.opacity = baseOpacity;
+            g.material.transparent = true;
+        }
+        g.renderOrder = 0;
+        scene.add(g);
+    }
+
+    // helper to toggle grids at runtime
+    function setGridVisibility(v) {
+        _gridVisible = !!v;
+        for (const gg of _grids) {
+            gg.visible = _gridVisible;
+        }
+    }
+
+    // expose setter to global scope for UI closure use
+    window.__setGridVisibility = setGridVisibility;
+}
 
 window.addEventListener('resize', onWindowResize);
 function onWindowResize() {
@@ -346,6 +530,30 @@ function onWindowResize() {
     // Note: Apply button removed — changes are applied automatically
 
     // Note: standalone Reset button removed — Normal button performs reset
+
+    // Grid toggle (Normal mode only): allow quick on/off and keyboard shortcut
+    let gridToggle = null;
+    if (startMode === 'normal' && typeof window.__setGridVisibility === 'function') {
+        gridToggle = document.createElement('button');
+        gridToggle.textContent = _gridVisible ? 'Grid: On' : 'Grid: Off';
+        Object.assign(gridToggle.style, { width: '100%', padding: '6px', marginTop: '6px', cursor: 'pointer', background: '#444', color: '#fff', border: 'none' });
+        gridToggle.addEventListener('click', () => {
+            const next = !_gridVisible;
+            window.__setGridVisibility(next);
+            gridToggle.textContent = next ? 'Grid: On' : 'Grid: Off';
+        });
+        panel.appendChild(gridToggle);
+
+        // keyboard shortcut: 'g' to toggle grid
+        window.addEventListener('keydown', (ev) => {
+            if ((ev.key === 'g' || ev.key === 'G') && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+                ev.preventDefault();
+                const next = !_gridVisible;
+                window.__setGridVisibility(next);
+                if (gridToggle) gridToggle.textContent = next ? 'Grid: On' : 'Grid: Off';
+            }
+        });
+    }
 
     // Mode buttons: switch between normal and cinematic by reloading with ?mode=
     const normalBtn = document.createElement('button');
